@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import shutil
 from concurrent.futures import ProcessPoolExecutor
@@ -26,7 +25,6 @@ import yaml
 from PIL import Image
 
 from ultralytics.data.converter import merge_multi_segment
-
 
 DEFAULT_COCONUT_ROOT = Path("/home/genesis/Train/Dataset/coconut")
 DEFAULT_IMAGE_ROOT = Path("/home/genesis/Train/Dataset/coco2017")
@@ -73,7 +71,9 @@ def ensure_symlink(src: Path, dst: Path) -> None:
     os.symlink(src, dst, target_is_directory=True)
 
 
-def load_coco80_categories(categories: list[dict[str, Any]]) -> tuple[list[str], dict[int, int], dict[int, dict[str, Any]]]:
+def load_coco80_categories(
+    categories: list[dict[str, Any]],
+) -> tuple[list[str], dict[int, int], dict[int, dict[str, Any]]]:
     """Return COCO thing names and category-id to dense-index map."""
     thing_categories = [c for c in categories if int(c.get("isthing", 0)) == 1]
     names = [str(c["name"]) for c in thing_categories]
@@ -91,11 +91,13 @@ def simplify_contour(contour: np.ndarray, approx_epsilon: float) -> np.ndarray |
     return points if len(points) >= 3 else None
 
 
-def segment_to_line(binary: np.ndarray, cls: int, width: int, height: int, min_area: int, approx_epsilon: float) -> tuple[str | None, int]:
+def segment_to_line(
+    binary: np.ndarray, cls: int, width: int, height: int, min_area: int, approx_epsilon: float
+) -> tuple[str | None, int]:
     """Convert one instance's binary mask to a single YOLO segment label line.
 
-    Uses RETR_CCOMP so interior holes are kept (as child contours), and merges all parts — disconnected fragments
-    of an occlusion-split instance plus hole boundaries — into ONE polygon via thin zero-width bridges
+    Uses RETR_CCOMP so interior holes are kept (as child contours), and merges all parts — disconnected fragments of an
+    occlusion-split instance plus hole boundaries — into ONE polygon via thin zero-width bridges
     (`merge_multi_segment`). This fixes the two systematic label defects of the previous RETR_EXTERNAL +
     one-line-per-contour approach: filled-in holes and one instance being split into several label instances.
 

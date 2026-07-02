@@ -7,7 +7,6 @@ import argparse
 import json
 from pathlib import Path
 
-
 COCO80_NAMES = [
     "person",
     "bicycle",
@@ -178,7 +177,9 @@ COCO80_TO_LVIS_ID = {
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--pred-json", required=True, type=Path, help="YOLO predictions.json with category_id=COCO index+1.")
+    parser.add_argument(
+        "--pred-json", required=True, type=Path, help="YOLO predictions.json with category_id=COCO index+1."
+    )
     parser.add_argument("--out-json", required=True, type=Path, help="Output predictions JSON with LVIS category ids.")
     parser.add_argument("--report-json", type=Path, help="Optional mapping summary JSON.")
     return parser.parse_args()

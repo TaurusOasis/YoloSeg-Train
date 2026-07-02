@@ -194,7 +194,10 @@ def limited(rows: list[dict[str, Any]], top_k: int) -> list[dict[str, Any]]:
 
 
 def table_rows(rows: list[dict[str, Any]]) -> str:
-    lines = ["| rank | cat_id | idx | freq | name | AP | AP50 | AP75 | inst |", "|---:|---:|---:|:---:|---|---:|---:|---:|---:|"]
+    lines = [
+        "| rank | cat_id | idx | freq | name | AP | AP50 | AP75 | inst |",
+        "|---:|---:|---:|:---:|---|---:|---:|---:|---:|",
+    ]
     for i, row in enumerate(rows, 1):
         name = str(row.get("name") or "").replace("|", "/")
         lines.append(
@@ -236,7 +239,9 @@ def build_interpretation(report: dict[str, Any]) -> list[str]:
             if gap > 5:
                 notes.append(f"{label} APf-APr gap is {gap:.2f} points; LVIS long-tail learning is a major limiter.")
             else:
-                notes.append(f"{label} APf-APr gap is {gap:.2f} points; long-tail imbalance is not the dominant split-level issue.")
+                notes.append(
+                    f"{label} APf-APr gap is {gap:.2f} points; long-tail imbalance is not the dominant split-level issue."
+                )
         if apr is not None and apc is not None and apf is not None:
             worst = min([("rare", apr), ("common", apc), ("frequent", apf)], key=lambda x: x[1])
             notes.append(f"{label} weakest frequency split is {worst[0]} at {worst[1] * 100:.2f} AP.")
@@ -262,10 +267,7 @@ def build_markdown(report: dict[str, Any], top_k: int) -> str:
     for key in ["AP_all", "AP_50", "AP_75", "APr", "APc", "APf"]:
         b = box.get(key)
         m = mask.get(key)
-        lines.append(
-            f"| {key} | {pct(b)} | {pct(m)} | {pct(delta(m, b))} | "
-            f"{(ratio(m, b) or float('nan')):.3f} |"
-        )
+        lines.append(f"| {key} | {pct(b)} | {pct(m)} | {pct(delta(m, b))} | {(ratio(m, b) or float('nan')):.3f} |")
 
     lines.extend(["", "## Interpretation", ""])
     lines.extend([f"- {note}" for note in report["interpretation"]])
