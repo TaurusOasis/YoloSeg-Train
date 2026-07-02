@@ -29,7 +29,9 @@ DEFAULT_OUT_ROOT = Path("/home/genesis/Train/Dataset/LVIS_coco80_yolo_seg")
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--src-root", type=Path, default=DEFAULT_SRC_ROOT, help="Source LVIS YOLO segment dataset root.")
+    parser.add_argument(
+        "--src-root", type=Path, default=DEFAULT_SRC_ROOT, help="Source LVIS YOLO segment dataset root."
+    )
     parser.add_argument("--out-root", type=Path, default=DEFAULT_OUT_ROOT, help="Output filtered dataset root.")
     parser.add_argument("--src-yaml", type=Path, help="Source LVIS data YAML. Defaults to SRC_ROOT/lvis-seg.yaml.")
     parser.add_argument("--splits", nargs="+", default=["train", "val"], help="Dataset splits to convert.")
@@ -118,7 +120,7 @@ def build_subset(args: argparse.Namespace) -> dict[str, Any]:
 
     mapped_names = [name for name in COCO80_NAMES if name in COCO80_TO_LVIS_ID]
     lvis_class_to_subset = {int(COCO80_TO_LVIS_ID[name]) - 1: i for i, name in enumerate(mapped_names)}
-    lvis_id_to_subset = {int(COCO80_TO_LVIS_ID[name]): i for i, name in enumerate(mapped_names)}
+    {int(COCO80_TO_LVIS_ID[name]): i for i, name in enumerate(mapped_names)}
 
     out_root.mkdir(parents=True, exist_ok=True)
     ensure_image_link(src_root, out_root)
