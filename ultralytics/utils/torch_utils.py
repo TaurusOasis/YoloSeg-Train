@@ -86,6 +86,17 @@ def smart_inference_mode():
     return decorate
 
 
+def autocast_dtype(device: str = "cuda"):
+    """Return the preferred autocast dtype for the current device."""
+    device_type = device.type if isinstance(device, torch.device) else str(device).split(":")[0]
+    if device_type == "cuda" and torch.cuda.is_available():
+        try:
+            return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        except Exception:
+            return torch.float16
+    return None
+
+
 def autocast(enabled: bool, device: str = "cuda"):
     """Get the appropriate autocast context manager based on PyTorch version and AMP setting.
 
@@ -108,8 +119,10 @@ def autocast(enabled: bool, device: str = "cuda"):
         - For PyTorch versions 1.13 and newer, it uses `torch.amp.autocast`.
         - For older versions, it uses `torch.cuda.amp.autocast`.
     """
+    device_type = device.type if isinstance(device, torch.device) else str(device).split(":")[0]
+    dtype = autocast_dtype(device_type) if enabled else None
     if TORCH_1_13:
-        return torch.amp.autocast(device, enabled=enabled)
+        return torch.amp.autocast(device_type, enabled=enabled, **({"dtype": dtype} if dtype else {}))
     else:
         return torch.cuda.amp.autocast(enabled)
 

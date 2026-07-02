@@ -100,6 +100,9 @@ warmup_momentum: 0.8 # (float) initial momentum during warmup
 warmup_bias_lr: 0.1 # (float) bias learning rate during warmup
 distill_model: # (str, optional) path to teacher model for knowledge distillation
 dis: 6.0 # (float) distillation loss weight
+dis_proto: 0.0 # (float) segmentation proto distillation loss weight
+distill_warmup_epochs: 0.0 # (float) linearly ramp distillation losses over the first N epochs
+distill_loss_clip: 10.0 # (float) max per-step distillation loss before batch scaling; 0 disables finite clipping
 box: 7.5 # (float) box loss gain
 cls: 0.5 # (float) classification loss gain
 cls_pw: 0.0 # (float) class weights power for handling class imbalance (0.0=disable, 1.0=full inverse frequency)

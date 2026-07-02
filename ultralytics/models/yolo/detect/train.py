@@ -212,9 +212,13 @@ class DetectionTrainer(BaseTrainer):
         Returns:
             (dict | list): Dictionary of labeled loss items if loss_items is provided, otherwise list of keys.
         """
-        keys = [f"{prefix}/{x}" for x in self.loss_names]
+        loss_names = self.loss_names
+        if prefix == "val":
+            # the validator does not compute distillation losses, so drop those columns instead of logging zeros
+            loss_names = [x for x in loss_names if x not in {"dis_feat", "dis_proto"}]
+        keys = [f"{prefix}/{x}" for x in loss_names]
         if loss_items is not None:
-            loss_items = [round(float(x), 5) for x in loss_items]  # convert tensors to 5 decimal place floats
+            loss_items = [round(float(x), 5) for x in loss_items[: len(keys)]]  # tensors to 5 decimal place floats
             return dict(zip(keys, loss_items))
         else:
             return keys

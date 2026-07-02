@@ -206,3 +206,6 @@ results.csv
 
 # CI test asset cache
 .ultralytics_cache/
+
+# OpenMemory - IDE/Assistant specific rules
+.cursor/rules/openmemory.mdc

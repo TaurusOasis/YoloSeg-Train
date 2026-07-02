@@ -54,6 +54,7 @@ from ultralytics.utils.torch_utils import (
     ModelEMA,
     attempt_compile,
     autocast,
+    autocast_dtype,
     convert_optimizer_state_dict_to_fp16,
     init_seeds,
     one_cycle,
@@ -337,7 +338,10 @@ class BaseTrainer:
 
         # Check AMP
         self.amp = torch.tensor(self.args.amp).to(self.device)  # True or False
-        if self.amp and RANK in {-1, 0}:  # Single-GPU and DDP
+        amp_dtype = autocast_dtype(self.device.type) if bool(self.amp) else None
+        if self.amp and amp_dtype == torch.bfloat16 and RANK in {-1, 0}:
+            LOGGER.info("AMP: BF16 autocast requested; skipping FP16 AMP checks.")
+        elif self.amp and RANK in {-1, 0}:  # Single-GPU and DDP
             callbacks_backup = callbacks.default_callbacks.copy()  # backup callbacks as check_amp() resets them
             self.amp = torch.tensor(check_amp(self.model), device=self.device)
             callbacks.default_callbacks = callbacks_backup  # restore callbacks
@@ -345,8 +349,17 @@ class BaseTrainer:
             self.amp = self.amp.int()  # gloo errors with boolean
             dist.broadcast(self.amp, src=0)  # broadcast from rank 0 to all other ranks
         self.amp = bool(self.amp)  # as boolean
+        self.amp_dtype = autocast_dtype(self.device.type) if self.amp else None
+        scaler_enabled = self.amp and self.device.type == "cuda" and self.amp_dtype != torch.bfloat16
+        if self.amp and RANK in {-1, 0}:
+            dtype_name = str(self.amp_dtype).replace("torch.", "") if self.amp_dtype else "default"
+            LOGGER.info(
+                f"AMP: using {dtype_name} autocast; GradScaler {'enabled' if scaler_enabled else 'disabled'}"
+            )
         self.scaler = (
-            torch.amp.GradScaler("cuda", enabled=self.amp) if TORCH_2_4 else torch.cuda.amp.GradScaler(enabled=self.amp)
+            torch.amp.GradScaler("cuda", enabled=scaler_enabled)
+            if TORCH_2_4
+            else torch.cuda.amp.GradScaler(enabled=scaler_enabled)
         )
         # Check imgsz
         gs = max(int(self.model.stride.max() if hasattr(self.model, "stride") else 32), 32)  # grid size (max stride)
@@ -372,8 +385,8 @@ class BaseTrainer:
 
         self._build_train_pipeline()
         self.validator = self.get_validator()
-        if self.args.distill_model is not None and "dis_loss" not in self.loss_names:
-            self.loss_names += ("dis_loss",)
+        if self.args.distill_model is not None and "dis_feat" not in self.loss_names:
+            self.loss_names += ("dis_feat", "dis_proto")  # feature and proto distillation, monitored separately
         self.ema = ModelEMA(self.model)
         self.set_class_weights()  # compute class weights after dataloader is ready
         if RANK in {-1, 0}:
@@ -414,6 +427,7 @@ class BaseTrainer:
         self._oom_retries = 0  # OOM auto-reduce counter for first epoch
         while True:
             self.epoch = epoch
+            self._nan_recovery_requested = False
             self.run_callbacks("on_train_epoch_start")
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")  # suppress 'Detected lr_scheduler.step() before optimizer.step()'
@@ -456,6 +470,11 @@ class BaseTrainer:
                 try:
                     with autocast(self.amp):
                         batch = self.preprocess_batch(batch)
+                        distill_model = unwrap_model(self.model)
+                        if hasattr(distill_model, "set_distill_warmup_factor"):
+                            warmup_iters = max(int(round(getattr(self.args, "distill_warmup_epochs", 0.0) * nb)), 1)
+                            factor = 1.0 if getattr(self.args, "distill_warmup_epochs", 0.0) <= 0 else min(1.0, ni / warmup_iters)
+                            distill_model.set_distill_warmup_factor(factor)
                         if self.args.compile:
                             # Decouple inference and loss calculations for improved compile performance
                             preds = self.model(batch["img"])
@@ -465,6 +484,30 @@ class BaseTrainer:
                         self.loss = loss.sum()
                         if RANK != -1:
                             self.loss *= self.world_size
+                        loss_bad = not (
+                            torch.isfinite(self.loss.detach()).all()
+                            and torch.isfinite(self.loss_items.detach()).all()
+                        )
+                        if RANK != -1:
+                            flag = torch.tensor(int(loss_bad), device=self.device)
+                            dist.all_reduce(flag, op=dist.ReduceOp.MAX)
+                            loss_bad = bool(flag.item())
+                        if loss_bad:
+                            self._nan_recovery_requested = True
+                            self.loss = torch.tensor(float("nan"), device=self.device)
+                            if RANK in {-1, 0}:
+                                try:
+                                    loss_values = self.loss_items.detach().float().cpu().tolist()
+                                except Exception:
+                                    loss_values = "<unavailable>"
+                                files = batch.get("im_file") or batch.get("img_file") or []
+                                files = files[:3] if isinstance(files, (list, tuple)) else files
+                                LOGGER.warning(
+                                    f"Non-finite loss at epoch {epoch + 1}, batch {i}/{nb}; "
+                                    f"loss_items={loss_values}; samples={files}. Recovering from last.pt."
+                                )
+                            self.optimizer.zero_grad()
+                            break
                         self.tloss = (
                             self.loss_items if self.tloss is None else (self.tloss * i + self.loss_items) / (i + 1)
                         )
@@ -497,7 +540,10 @@ class BaseTrainer:
                     self.optimizer.zero_grad()
                     break  # restart epoch loop with reduced batch size
                 if ni - last_opt_step >= self.accumulate:
-                    self.optimizer_step()
+                    if not self.optimizer_step():
+                        self._nan_recovery_requested = True
+                        self.loss = torch.tensor(float("nan"), device=self.device)
+                        break
                     last_opt_step = ni
 
                     # Timed stopping
@@ -536,6 +582,10 @@ class BaseTrainer:
 
             if self._oom_retries and not self.stop:
                 continue  # OOM recovery broke the for loop, restart with reduced batch size
+            if self._nan_recovery_requested:
+                if self._handle_nan_recovery(epoch, force=True):
+                    self._nan_recovery_requested = False
+                    continue
 
             if hasattr(unwrap_model(self.model).criterion, "update"):
                 unwrap_model(self.model).criterion.update()
@@ -781,12 +831,23 @@ class BaseTrainer:
     def optimizer_step(self):
         """Perform a single step of the training optimizer with gradient clipping and EMA update."""
         self.scaler.unscale_(self.optimizer)  # unscale gradients
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
+        grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
+        bad_grad = not torch.isfinite(grad_norm)
+        if RANK != -1:
+            flag = torch.tensor(int(bad_grad), device=self.device)
+            dist.all_reduce(flag, op=dist.ReduceOp.MAX)
+            bad_grad = bool(flag.item())
+        if bad_grad:
+            if RANK in {-1, 0}:
+                LOGGER.warning(f"Non-finite gradient norm {grad_norm}; skipping optimizer step and recovering.")
+            self.optimizer.zero_grad()
+            return False
         self.scaler.step(self.optimizer)
         self.scaler.update()
         self.optimizer.zero_grad()
         if self.ema:
             self.ema.update(self.model)
+        return True
 
     def preprocess_batch(self, batch):
         """Allow custom preprocessing of model inputs and ground truths depending on task type."""
@@ -928,6 +989,9 @@ class BaseTrainer:
                     "val",
                     "plots",
                     "distill_model",
+                    "dis_proto",
+                    "distill_warmup_epochs",
+                    "distill_loss_clip",
                 ):  # allow arg updates to reduce memory or update device on resume
                     if k in overrides:
                         setattr(self.args, k, overrides[k])
@@ -961,20 +1025,28 @@ class BaseTrainer:
             self.ema.updates = ckpt["updates"]
         self.best_fitness = ckpt.get("best_fitness", 0.0)
 
-    def _handle_nan_recovery(self, epoch):
+    def _handle_nan_recovery(self, epoch, force=False):
         """Detect and recover from NaN/Inf loss and fitness collapse by loading last checkpoint."""
-        loss_nan = self.loss is not None and not self.loss.isfinite()
+        loss_nan = force or (self.loss is not None and not self.loss.isfinite())
         fitness_nan = self.fitness is not None and not np.isfinite(self.fitness)
         fitness_collapse = self.best_fitness and self.best_fitness > 0 and self.fitness == 0
-        corrupted = RANK in {-1, 0} and loss_nan and (fitness_nan or fitness_collapse)
-        reason = "Loss NaN/Inf" if loss_nan else "Fitness NaN/Inf" if fitness_nan else "Fitness collapse"
+        corrupted = RANK in {-1, 0} and (loss_nan if force else loss_nan and (fitness_nan or fitness_collapse))
+        reason = (
+            "Non-finite training loss/gradient"
+            if force
+            else "Loss NaN/Inf"
+            if loss_nan
+            else "Fitness NaN/Inf"
+            if fitness_nan
+            else "Fitness collapse"
+        )
         if RANK != -1:  # DDP: broadcast to all ranks
             broadcast_list = [corrupted if RANK == 0 else None]
             dist.broadcast_object_list(broadcast_list, 0)
             corrupted = broadcast_list[0]
         if not corrupted:
             return False
-        if epoch == self.start_epoch:
+        if epoch == self.start_epoch and not force:
             LOGGER.warning(f"{reason} detected but can not recover from last.pt...")
             return False  # Cannot recover on first epoch, let training continue
         if not self.last.exists():
@@ -1066,6 +1138,8 @@ class BaseTrainer:
         use_muon = name == "MuSGD"
         for module_name, module in unwrap_model(model).named_modules():
             for param_name, param in module.named_parameters(recurse=False):
+                if not param.requires_grad:
+                    continue  # skip frozen params (e.g. the distillation teacher) so they never enter the optimizer
                 fullname = f"{module_name}.{param_name}" if module_name else param_name
                 if param.ndim >= 2 and use_muon:
                     g[3][fullname] = param  # muon params

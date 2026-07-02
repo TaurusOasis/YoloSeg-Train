@@ -613,7 +613,7 @@ class v8SegmentationLoss(v8DetectionLoss):
         target_bboxes_normalized = target_bboxes / imgsz[[1, 0, 1, 0]]
 
         # Areas of target bboxes
-        marea = xyxy2xywh(target_bboxes_normalized)[..., 2:].prod(2)
+        marea = xyxy2xywh(target_bboxes_normalized)[..., 2:].prod(2).clamp(min=1e-6)
 
         # Normalize to mask size
         mxyxy = target_bboxes_normalized * torch.tensor([mask_w, mask_h, mask_w, mask_h], device=proto.device)
@@ -1193,7 +1193,8 @@ class E2ELoss:
         one2many, one2one = preds["one2many"], preds["one2one"]
         loss_one2many = self.one2many.loss(one2many, batch)
         loss_one2one = self.one2one.loss(one2one, batch)
-        return loss_one2many[0] * self.o2m + loss_one2one[0] * self.o2o, loss_one2one[1]
+        loss_items = loss_one2many[1] * self.o2m + loss_one2one[1] * self.o2o
+        return loss_one2many[0] * self.o2m + loss_one2one[0] * self.o2o, loss_items
 
     def update(self) -> None:
         """Update the weights for one-to-many and one-to-one losses based on the decay schedule."""
