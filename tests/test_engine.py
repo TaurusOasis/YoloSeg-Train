@@ -200,7 +200,126 @@ def test_distill_resume(tmp_path: Path):
     model = unwrap_model(trainer.model)
     assert isinstance(model, DistillationModel), "resume should rebuild the DistillationModel"
     assert model.teacher_model is not None, "resume should rebuild the teacher from the distill_model path"
+    assert model.student_model.names == trainer.data["names"], "resume should sync dataset names to the student"
+    assert model.names == trainer.data["names"], "distillation wrapper names should proxy student names"
     assert trainer.start_epoch == trainer.epoch == 1, "resume test failed"
+
+
+# Segmentation distillation teacher: prefer a local checkpoint, else let Ultralytics resolve/download the name.
+SEG_TEACHER = next(
+    (p for p in (WEIGHTS_DIR / "yolo26s-seg.pt", WEIGHTS_DIR.parent / "yolo26s-seg.pt") if p.exists()),
+    "yolo26s-seg.pt",
+)
+
+
+def _build_seg_distill_model(dis_proto: float = 1.0, imgsz: int = 32) -> DistillationModel:
+    """Build a standalone segmentation DistillationModel outside the trainer for fast unit tests.
+
+    The student is created from the config YAML, so it carries cfg-default numeric class names ({0: '0', ...})
+    that do not match the teacher, which is exactly the fixture needed to exercise class-alignment code paths.
+    """
+    student = YOLO("yolo26n-seg.yaml").model
+    args = get_cfg(DEFAULT_CFG)
+    args.imgsz = imgsz
+    args.dis = 3.0
+    args.dis_proto = dis_proto
+    args.distill_loss_clip = 10.0
+    student.args = args
+    student.eval()
+    return DistillationModel(teacher_model=SEG_TEACHER, student_model=student)
+
+
+def test_distill_seg_proto(tmp_path: Path):
+    """Test segmentation proto distillation trains and logs dis_feat/dis_proto as separate finite columns."""
+    overrides = {
+        "data": "coco8-seg.yaml",
+        "model": "yolo26n-seg.yaml",
+        "distill_model": SEG_TEACHER,
+        "dis_proto": 1.0,  # enable the segmentation-specific proto distillation branch
+        "distill_warmup_epochs": 0.0,  # no ramp so proto loss is non-zero within a single-batch epoch
+        "imgsz": 32,
+        "multi_scale": 0.5,  # vary per-batch size to exercise dynamic score splitting and chunked loss_sl2
+        "epochs": 1,
+        "plots": False,
+        "workers": 0,
+        "project": tmp_path,
+        "name": "distill_seg",
+        "exist_ok": True,
+    }
+    trainer = segment.SegmentationTrainer(overrides=overrides)
+    trainer.final_eval = lambda: None
+    trainer.train()
+    assert "dis_feat" in trainer.loss_names and "dis_proto" in trainer.loss_names, "seg distillation splits dis columns"
+    items = trainer.label_loss_items(trainer.tloss)
+    dis = {k.split("/")[-1]: v for k, v in items.items() if "dis_" in k}
+    assert {"dis_feat", "dis_proto"} <= set(dis), "both distillation components must be logged"
+    assert all(v == v and v >= 0 for v in dis.values()), f"distillation losses must be finite and non-negative: {dis}"
+    assert dis["dis_proto"] > 0, "proto distillation should contribute against a segmentation teacher"
+    # validation drops the distillation columns (no misleading val/dis_*=0)
+    assert not any("dis_" in k for k in trainer.label_loss_items(None, prefix="val")), "val must omit dis columns"
+
+
+def test_distill_class_alignment():
+    """Test teacher class-index resolution across full-match, subset, and synonym-mismatch student names."""
+    dm = _build_seg_distill_model()
+    teacher_names = {int(k): v for k, v in dm.teacher_model.names.items()}
+
+    # Exact full overlap collapses to None (use every teacher class, no index_select).
+    dm.names = dict(teacher_names)
+    assert dm.teacher_class_indices is None, "full name overlap should use all teacher classes"
+
+    # Dropping two student classes must select exactly the remaining teacher channels.
+    subset = dict(enumerate(list(teacher_names.values())[:-2]))
+    dm.names = subset
+    idx = dm.teacher_class_indices
+    assert idx is not None and idx.numel() == len(teacher_names) - 2, "subset must map to matching teacher indices"
+
+    # A synonym/formatting difference drops only that one class (exact lowercase matching).
+    renamed = dict(teacher_names)
+    renamed[min(renamed)] = f"{renamed[min(renamed)]}_synonym_xyz"
+    dm.names = renamed
+    idx2 = dm.teacher_class_indices
+    assert idx2 is not None and idx2.numel() == len(teacher_names) - 1, "renamed class should silently drop"
+
+
+def test_distill_sanitize_and_warmup():
+    """Test distillation loss sanitize (NaN/Inf/clip/negative) and warmup-factor clamping."""
+    dm = _build_seg_distill_model()
+    assert dm.sanitize_distill_loss(torch.tensor([float("nan")])).item() == 0.0, "NaN -> 0"
+    assert dm.sanitize_distill_loss(torch.tensor([float("inf")])).item() == 10.0, "Inf -> clip"
+    assert dm.sanitize_distill_loss(torch.tensor([999.0])).item() == 10.0, "spike clamped to clip"
+    assert dm.sanitize_distill_loss(torch.tensor([-5.0])).item() == 0.0, "negative -> 0"
+
+    dm.student_model.args.distill_loss_clip = 0.0  # 0 disables the finite upper clamp
+    assert dm.sanitize_distill_loss(torch.tensor([999.0])).item() == 999.0, "clip=0 leaves large values"
+    assert dm.sanitize_distill_loss(torch.tensor([float("inf")])).item() == 0.0, "clip=0 still maps Inf to 0"
+
+    for factor, expected in [(2.0, 1.0), (-1.0, 0.0), (0.5, 0.5)]:
+        dm.set_distill_warmup_factor(factor)
+        assert dm.distill_warmup_factor == expected, f"warmup factor {factor} should clamp to {expected}"
+
+
+def test_distill_pickle_roundtrip():
+    """Test __getstate__/__setstate__ clear captured features and re-register hooks on deepcopy."""
+    import copy
+
+    dm = _build_seg_distill_model()
+    # Batch size 2 mirrors the constructor's probe forward and avoids BatchNorm's N=1 train-mode error.
+    imgs = torch.zeros(2, 3, dm.student_model.args.imgsz, dm.student_model.args.imgsz)
+    dm._forward_teacher_for_distillation(imgs)
+    dm.student_model(imgs)
+    assert dm._teacher_feats and dm._student_feats, "forward passes should populate the shared feature dicts"
+
+    clone = copy.deepcopy(dm)
+    assert clone._teacher_feats == {} and clone._student_feats == {}, "pickling must not carry captured grad tensors"
+    assert len(clone._student_hooks) == len(clone.feats_idx), "student hooks must be re-registered after unpickling"
+    assert len(clone._teacher_hooks) == len(clone.feats_idx), "teacher hooks must be re-registered after unpickling"
+    assert clone.names == dm.names, "wrapper names still proxy the student after a round-trip"
+
+    # Re-registered hooks must actually capture on a fresh forward.
+    clone._forward_teacher_for_distillation(imgs)
+    clone.student_model(imgs)
+    assert clone._student_feats and clone._teacher_feats, "re-registered hooks should capture features again"
 
 
 @pytest.mark.parametrize(
