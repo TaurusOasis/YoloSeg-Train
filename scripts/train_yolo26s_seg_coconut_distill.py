@@ -14,6 +14,11 @@ from typing import Any
 
 import yaml
 
+# Must be set before torch initializes the CUDA allocator: multi_scale training resizes every batch and
+# fragments the cache, which is what pushed resumed DDP runs into mid-epoch OOM (see F20/F21 in
+# docs/yolo26s-seg-distill-training-flow.md). DDP workers inherit this via the environment.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 from ultralytics import YOLO
 
 
@@ -300,27 +305,41 @@ def maybe_start_swanlab_watch(args: argparse.Namespace) -> None:
     )
 
 
+def cli_provided(*flags: str) -> bool:
+    """Return True when any of the given option strings was explicitly typed on the command line."""
+    return any(arg == flag or arg.startswith(f"{flag}=") for arg in sys.argv[1:] for flag in flags)
+
+
 def build_train_args(args: argparse.Namespace, data_yaml: Path, unknown: list[str]) -> dict[str, Any]:
     """Build Ultralytics train overrides, keeping resume overrides intentionally narrow."""
     extra_overrides = parse_unknown_overrides(unknown)
     if args.resume:
-        train_args = {
-            "resume": args.resume,
-            "data": str(data_yaml),
-            "device": args.device,
-            "workers": args.workers,
-            "batch": args.batch,
-            "imgsz": args.imgsz,
-            "val": not args.no_val,
-            "save_period": args.save_period,
-            "patience": args.patience,
-            "dis_proto": args.dis_proto,
-            "distill_warmup_epochs": args.distill_warmup_epochs,
-            "distill_loss_clip": args.distill_loss_clip,
+        # Only forward arguments the user explicitly typed. Argparse defaults must not reach the trainer's
+        # resume whitelist, or they silently overwrite the checkpoint's train_args (e.g. a run started with
+        # --patience 200 would resume with the script default 100).
+        resume_overridable = {
+            "device": ("--device",),
+            "workers": ("--workers",),
+            "batch": ("--batch",),
+            "imgsz": ("--imgsz",),
+            "save_period": ("--save-period",),
+            "patience": ("--patience",),
+            "dis_proto": ("--dis-proto",),
+            "distill_warmup_epochs": ("--distill-warmup-epochs",),
+            "distill_loss_clip": ("--distill-loss-clip",),
         }
+        train_args = {"resume": args.resume, "data": str(data_yaml)}
+        if args.no_val:
+            train_args["val"] = False
+        for key, flags in resume_overridable.items():
+            if cli_provided(*flags):
+                train_args[key] = getattr(args, key)
         if "distill_model" in extra_overrides:
             train_args["distill_model"] = extra_overrides.pop("distill_model")
         train_args.update(extra_overrides)
+        dropped = sorted(set(resume_overridable) - set(train_args))
+        if dropped:
+            print(f"Resume: inheriting {', '.join(dropped)} from the checkpoint train_args (not overridden).")
         return train_args
 
     train_args = {

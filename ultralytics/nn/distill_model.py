@@ -374,9 +374,13 @@ class DistillationModel(nn.Module):
         n, c = student_feat.shape[:2]
         student_feat = student_feat.view(n, c, -1)
         teacher_feat = teacher_feat.view(n, c, -1)
-        mse = F.mse_loss(student_feat, teacher_feat, reduction="none")
-        weighted_mse = (mse * teacher_score).sum() / (teacher_score.sum() * c + 1e-9)
-        return weighted_mse
+        # Accumulate the weighted squared error in batch chunks instead of materializing two full (N, C, HW)
+        # temporaries: at multi_scale peaks (800px) that allocation OOM'd 32GB GPUs mid-epoch, which is fatal
+        # under DDP where the trainer's OOM auto-recovery does not apply.
+        numerator = student_feat.new_zeros(())
+        for s, t, w in zip(student_feat.chunk(4), teacher_feat.chunk(4), teacher_score.chunk(4)):
+            numerator = numerator + ((s - t).pow(2) * w).sum()
+        return numerator / (teacher_score.sum() * c + 1e-9)
 
     def extract_proto(self, preds, branch: str = "one2many") -> torch.Tensor | None:
         """Extract the mask prototype tensor from segmentation head outputs."""

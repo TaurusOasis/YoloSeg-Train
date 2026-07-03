@@ -980,7 +980,7 @@ class BaseTrainer:
                 resume = True
                 self.args = get_cfg(ckpt_args)
                 self.args.model = self.args.resume = str(last)  # reinstate model
-                for k in (
+                whitelist = (
                     "imgsz",
                     "batch",
                     "device",
@@ -995,12 +995,30 @@ class BaseTrainer:
                     "val",
                     "plots",
                     "distill_model",
+                    "dis",
                     "dis_proto",
                     "distill_warmup_epochs",
                     "distill_loss_clip",
-                ):  # allow arg updates to reduce memory or update device on resume
-                    if k in overrides:
+                )  # allow arg updates to reduce memory or update device on resume
+                applied = []
+                for k in whitelist:
+                    if k in overrides and getattr(self.args, k, None) != overrides[k]:
                         setattr(self.args, k, overrides[k])
+                        applied.append(k)
+                if applied:
+                    LOGGER.info(f"Resume overrides applied: {', '.join(applied)}; other args come from the checkpoint.")
+                ignored = sorted(
+                    k
+                    for k, v in overrides.items()
+                    if k not in whitelist
+                    and k not in {"model", "task", "mode", "resume", "data", "project", "name", "exist_ok"}
+                    and getattr(self.args, k, None) != v
+                )
+                if ignored:
+                    LOGGER.warning(
+                        f"Resume ignores overrides not in the resume whitelist (checkpoint values kept): "
+                        f"{', '.join(ignored)}"
+                    )
 
                 # Handle augmentations parameter for resume: check if user provided custom augmentations
                 if ckpt_args.get("augmentations") is not None:
