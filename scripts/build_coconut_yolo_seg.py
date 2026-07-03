@@ -367,6 +367,7 @@ def main() -> None:
         "path": str(out_root),
         "train": "train.txt",
         "val": "val.txt",
+        "nc": len(names),
         "names": {i: name for i, name in enumerate(names)},
     }
     yaml_path = out_root / f"{args.train_split.replace('_', '-')}-seg.yaml"

@@ -26,7 +26,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TRAIN_SPLIT = "coconut_b"
 DEFAULT_DATA_ROOTS = {
     "coconut_s": Path("/home/genesis/Train/Dataset/COCONut_yolo_seg"),
-    "coconut_b": Path("/home/genesis/Train/Dataset/COCONut_b_yolo_seg"),
+    "coconut_b": Path("/home/genesis/Train/Dataset/COCONut_b_yolo_seg_v2"),
 }
 DEFAULT_COCONUT_ROOT = Path("/home/genesis/Train/Dataset/coconut")
 DEFAULT_IMAGE_ROOT = Path("/home/genesis/Train/Dataset/coco2017")
@@ -249,7 +249,15 @@ def configure_swanlab(args: argparse.Namespace) -> None:
 
 def print_run_notes(args: argparse.Namespace) -> None:
     """Print short notes for settings that are easy to misread in logs."""
-    if args.patience >= args.epochs:
+    if args.resume:
+        inherited = []
+        if not cli_provided("--patience"):
+            inherited.append("patience")
+        if not cli_provided("--epochs"):
+            inherited.append("epochs")
+        if inherited:
+            print(f"Resume: inheriting {', '.join(inherited)} from the checkpoint train_args.")
+    elif args.patience >= args.epochs:
         print(f"Early stopping is effectively disabled: patience={args.patience}, epochs={args.epochs}.")
     if args.distill_warmup_epochs > 0:
         print(
@@ -322,6 +330,7 @@ def build_train_args(args: argparse.Namespace, data_yaml: Path, unknown: list[st
             "workers": ("--workers",),
             "batch": ("--batch",),
             "imgsz": ("--imgsz",),
+            "epochs": ("--epochs",),
             "save_period": ("--save-period",),
             "patience": ("--patience",),
             "dis_proto": ("--dis-proto",),

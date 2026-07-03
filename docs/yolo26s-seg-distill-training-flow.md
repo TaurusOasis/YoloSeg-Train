@@ -278,6 +278,7 @@ COCO 官方评测把 crowd 区域作为 ignore 处理；当前转换直接丢标
 **F19（中→✅ 已修 07-03）resume 时脚本 argparse 默认值静默覆盖 checkpoint 超参。**
 问题链路：训练脚本 `build_train_args` 的 resume 分支把 `--batch/--patience/--workers` 等**默认值**一律塞进 overrides；trainer `check_resume` 的白名单机制只判断 `k in overrides`，无法区分"用户显式指定"与"脚本默认"。实测后果：原始 run `--patience 200` 启动，resume 未传 patience → 被脚本默认 100 静默覆盖（args.yaml 可查）；batch 同理维持了 96→150 类误覆盖的可能（F17 的 B 阶段命名漂移即同源）。
 修复：① 脚本侧 `cli_provided()` 扫描 `sys.argv`，resume 分支**只传显式输入的参数**，并打印继承/覆盖清单；② trainer `check_resume` 打印实际生效的 overrides，对白名单外且值不同的 overrides 显式 WARNING（原先静默忽略，`data` 就是典型：resume 传 `--data` 实际不生效）；③ 白名单补上 `dis`（原先只有 `dis_proto`，蒸馏权重中途不可调）。
+07-03 追加：白名单再补 `epochs`——支持 resume 时扩展总 epoch 预算（如 200→250 继续训）；与 `resume_training` 的 `assert 0 < start_epoch < self.epochs` 交互安全（传入 ≤ 已训 epoch 时 fail-fast 报"nothing to resume"），cos_lr 调度按新总数重算。已加 `test_resume_epochs_override` 覆盖（2→4 扩展训到完成）。脚本默认数据根同步指向 `COCONut_b_yolo_seg_v2`，`build_coconut_yolo_seg.py` 生成的 data YAML 补 `nc` 字段。
 
 **F20（中，缓解）DDP 训练中途 OOM 无兜底，单点 OOM 整组崩溃。**
 `trainer.py` 的 OOM 自动降 batch 仅在**首 epoch + 单 GPU**生效（`epoch > start_epoch or RANK != -1` 直接 raise）；多卡训练任何 rank 中途 OOM → 全组退出，只能人工 resume。本次事故正是 rank1 在 `loss_sl2` 处分配 676MB 失败。彻底方案（skip-batch 恢复：catch OOM → 全 rank all_reduce 标志 → 同步跳过该 batch + empty_cache）改动训练主循环风险较高，暂不做；当前缓解：F21 降低峰值 + 脚本默认注入 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`（multi_scale 每 batch 变尺寸导致的分配器碎片是 OOM 的放大器）+ batch 留足余量（multi_scale=0.25 时峰值显存 ≈ 基准 × 1.56）。

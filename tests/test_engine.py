@@ -160,6 +160,40 @@ def test_resume_incomplete(task, weight, data, tmp_path):
     assert resume_model.trainer.start_epoch == resume_model.trainer.epoch == 1, "resume test failed"
 
 
+def test_resume_epochs_override(tmp_path: Path):
+    """Test resume can extend the total epoch budget via the epochs override (whitelisted in check_resume)."""
+    train_args = {
+        "data": "coco8.yaml",
+        "model": "yolo26n.yaml",
+        "epochs": 2,
+        "save": True,
+        "plots": False,
+        "workers": 0,
+        "project": tmp_path,
+        "name": "resume_epochs",
+        "imgsz": 32,
+        "exist_ok": True,
+    }
+
+    def stop_after_first_epoch(trainer):
+        if trainer.epoch == 0:
+            trainer.stop = True
+
+    trainer = detect.DetectionTrainer(overrides=train_args)
+    trainer.final_eval = lambda: None
+    trainer.add_callback("on_train_epoch_end", stop_after_first_epoch)
+    trainer.train()
+    _, ckpt = load_checkpoint(trainer.last)
+    assert ckpt["epoch"] == 0, "checkpoint should be resumable"
+
+    # Resume with a larger epoch budget: the override must extend total epochs instead of being ignored.
+    resume = detect.DetectionTrainer(overrides={**train_args, "resume": trainer.last, "epochs": 4})
+    resume.final_eval = lambda: None
+    resume.train()
+    assert resume.epochs == 4, "epochs override should extend the resumed run"
+    assert resume.start_epoch == 1 and resume.epoch == 3, "resumed run should train the extended epochs to completion"
+
+
 def test_distill_resume(tmp_path: Path):
     """Test knowledge distillation resumes from an incomplete checkpoint."""
     overrides = {
