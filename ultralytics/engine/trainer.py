@@ -817,6 +817,12 @@ class BaseTrainer:
                 LOGGER.info("Resuming training DistillationModel from checkpoint weights")
             student_model = self.get_model(cfg=cfg, weights=weights.student_model, verbose=RANK in {-1, 0})
             student_model.args = self.args
+            # get_model rebuilds from cfg with numeric default names; carry over the checkpoint names so the
+            # teacher class alignment computed in DistillationModel.__init__ starts from the trained mapping
+            # (set_model_attributes later re-syncs names from the dataset through the DistillationModel.names setter).
+            ckpt_names = getattr(weights.student_model, "names", None)
+            if ckpt_names:
+                student_model.names = ckpt_names
             # teacher is stripped from the checkpoint to save memory/disk; rebuild it from the distill_model path
             teacher_model = weights.teacher_model if weights.teacher_model is not None else self.args.distill_model
             model = DistillationModel(student_model=student_model, teacher_model=teacher_model)

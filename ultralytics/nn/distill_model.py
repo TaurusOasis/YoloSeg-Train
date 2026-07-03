@@ -117,6 +117,25 @@ class DistillationModel(nn.Module):
         """Set the current distillation warmup factor in [0, 1]."""
         self.distill_warmup_factor = max(0.0, min(1.0, float(factor)))
 
+    @property
+    def names(self):
+        """Expose the student's class names so wrapper-level reads never diverge from the student."""
+        return self.student_model.names
+
+    @names.setter
+    def names(self, value) -> None:
+        """Propagate class names to the student and refresh teacher class alignment.
+
+        The trainer writes ``model.names`` in ``set_model_attributes`` after model setup. On resume the wrapper
+        already exists at that point and the rebuilt student carries cfg-default numeric names, so without this
+        setter the dataset names would land on the wrapper only: checkpoints would save numeric student names
+        and ``teacher_class_indices`` would silently fall back to all teacher classes.
+        """
+        if getattr(self.student_model, "names", None) == value:
+            return
+        self.student_model.names = value
+        self.teacher_class_indices = self._resolve_teacher_class_indices()
+
     def sanitize_distill_loss(self, loss: torch.Tensor, clamp: bool = True) -> torch.Tensor:
         """Replace non-finite distillation loss values and optionally cap abnormal spikes before gradients."""
         clip = getattr(self, "distill_loss_clip", None)

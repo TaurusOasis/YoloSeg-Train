@@ -85,7 +85,7 @@ scripts/train_yolo26s_seg_coconut_distill.py
 ### 2.3 `DistillationModel` 内部结构（`nn/distill_model.py`）
 
 - **构造**（:63-114）：加载 teacher 并冻结 → `get_distill_layers` 取 Detect 头输入层 + 头本身（YOLO26 → `[16,19,22,23]`）→ 对 teacher/student 同层注册 `FeatureHook`（共享 dict 存输出）→ dummy forward 探测通道维 → 为每对 neck 特征建 `projector`（Conv1×1-ReLU-Conv1×1，student→teacher 通道）。
-- **类别对齐**（:144-160）：`_resolve_teacher_class_indices` 将双方 `names` 小写化后按名字取交集；teacher 全覆盖时返回 `None`（C：80=80 走全量），部分覆盖时 `index_select` 只保留同名通道（B：80→78）。精确字符串匹配；07-03 起未匹配的 student 类别会显式 WARNING 列出（修复 F10 的静默丢类）。
+- **类别对齐**（:144-160）：`_resolve_teacher_class_indices` 将双方 `names` 小写化后按名字取交集；teacher 全覆盖时返回 `None`（C：80=80 走全量），部分覆盖时 `index_select` 只保留同名通道（B：80→78）。精确字符串匹配；07-03 起未匹配的 student 类别会显式 WARNING 列出（修复 F10 的静默丢类）；`names` 为 property，setter 写入 student 并重算 indices，保证 trainer `set_model_attributes` 在 resume 场景下也能穿透 wrapper 同步（修复 F18）。
 - **teacher 前向 hack**（:247-260）：临时置 `teacher_head.training=True`（子模块保持 eval，BN 不更新），让 Detect/Segment 返回训练格式 raw preds/proto、跳过推理后处理——规避此前 teacher 蒸馏时的 CUDA launch timeout。
 - **损失**（:268-319）：
   - `loss_sl2`（:321-341）：teacher 头 scores（one2many+one2one 平均、sigmoid、逐类 max）作空间注意力权重的逐元素 MSE，按 `score.sum()×C` 归一。
@@ -98,7 +98,7 @@ scripts/train_yolo26s_seg_coconut_distill.py
 
 - `ModelEMA.__init__`（`torch_utils.py:688-691`）：deepcopy 后把 `teacher_model` 置 None——EMA 只平滑 student + projector。
 - 保存 checkpoint（`trainer.py:684-703`）：存 EMA（无 teacher）；最终 `strip_optimizer`（`torch_utils.py:764-769`）进一步只留 `student_model`，所以 `best.pt` 是纯 student，可直接推理/作下一阶段初始化。
-- resume（`trainer.py:782-793`）：checkpoint 里是无 teacher 的 `DistillationModel` → 重建 student → 从 `args.distill_model` 路径重建 teacher → 恢复 projector 权重。
+- resume（`trainer.py:814-830`）：checkpoint 里是无 teacher 的 `DistillationModel` → 重建 student（07-03 起回填 checkpoint names，修复 F18）→ 从 `args.distill_model` 路径重建 teacher → 恢复 projector 权重。
 - resume 参数白名单（`trainer.py:944-952`）：仅 `device/batch/epochs/.../distill_model/dis_proto/distill_warmup_epochs/distill_loss_clip` 允许覆盖，其余一律沿用 checkpoint 的 `train_args`。
 
 ### 2.5 trainer 中的蒸馏侵入点清单（耦合度评估用）
@@ -222,6 +222,10 @@ F11 修复后的 v2 标签（每实例一行、孔洞保留，`COCONut_b_yolo_se
 **F4（低-中）`build_optimizer` 未过滤 `requires_grad=False` 参数（`trainer.py:1087-1099`）。**
 参数收集遍历整个 `DistillationModel.named_modules()`，冻结的 teacher 参数（yolo26x-seg，~60M）全部进入 MuSGD param groups。torch 优化器对 `grad=None` 的参数跳过 step，所以不影响正确性，但：① 日志里的参数组统计虚高、误导；② optimizer 遍历开销白付；③ 若未来换成对 `requires_grad=False` 不容忍的优化器实现会直接踩雷。一行过滤 `if not param.requires_grad: continue` 即可。
 
+**F18（中→✅ 已修 07-03）resume 时 student names 丢失 + teacher 类别对齐静默失效。**
+问题链路：resume 路径 `setup_model()`（`trainer.py:814-822`）用 `get_model(cfg, weights=ckpt.student_model)` 重建 student——只 load 权重，names 落回 `tasks.py` 的数字默认 `{0:'0',1:'1',...}`；`DistillationModel` 随即在构造时用数字 names 计算 `teacher_class_indices`（与 teacher 真名交集为空 → 静默回退"全量 teacher 类"）；之后 `set_model_attributes()` 把数据集真名写到 `self.model.names` 时 **wrapper 已存在，只写到外层**，student 不同步、indices 不重算。后果：① 经历过 resume 的 run，checkpoint（strip 后的纯 student）类名全是数字——**B/C 的 best.pt 实测均如此**（评测显示类名 "79" 的根因）；② 阶段 B（78↔80）resume 后的训练段蒸馏 score 加权通道错位（C 是 80↔80 全匹配，回退全量恰好无实害）。
+修复（07-03）：`DistillationModel` 增加 `names` property——getter 直读 `student_model.names`，setter 写入 student 并重算 `teacher_class_indices`，trainer 的 `set_model_attributes` 无需改动即自动同步；resume 重建 student 时先回填 checkpoint 里的 names（`trainer.py:818-824`），构造期对齐即正确。历史 checkpoint（B/C 的 best/last）已按各自数据 YAML 就地补回真名。冒烟：resume 后 strip 出的 student names 为真名、无误匹配 WARNING；`test_distill_resume` 通过。
+
 **F5（低）DDP 全程 `find_unused_parameters=True`（`trainer.py:375-380`）。**
 蒸馏下 compile 被禁 → `find_unused_parameters=not compile = True`。该选项每次 backward 多一遍图遍历，3 GPU × 241k 图 × 100 epoch 的训练里是持续开销。teacher 已冻结（不在 DDP 梯度桶里）、student+projector 每步全参与，理论上可以 `False`；若历史上因 E2E 双分支存在 unused 参数，应查明后针对性处理而非全局兜底。
 
@@ -285,6 +289,7 @@ COCO 官方评测把 crowd 区域作为 ignore 处理；当前转换直接丢标
 | F14/F15 | dis_loss 拆列 / SwanLab 续接 | 低 | 小 | **✅ 已修（07-03）** |
 | F5/F3/F12/F17 | DDP 开销/前向 hack/iscrowd/命名 | 低 | 小 | 按需 |
 | F10 | 类别匹配静默丢类 | 低 | 小 | **✅ 已修（07-03，未匹配类显式 WARNING）** |
+| F18 | resume 丢 student names / 类别对齐失效 | 中 | 小 | **✅ 已修（07-03，names property 同步 + resume 回填）** |
 | F11 | 转换标签孔洞/断裂损耗 | 中 | 脚本 | **✅ 代码已修 + 标签已重建到 v2（07-03）** |
 
 **07-03 修复明细**（均已通过冒烟验证：coco8-seg 蒸馏 2 epoch + detect 蒸馏 resume 测试 + 转换脚本 2554 实例 IoU 对比）：
@@ -293,6 +298,7 @@ COCO 官方评测把 crowd 区域作为 ignore 处理；当前转换直接丢标
 - F15：SwanLab 回调把 run id 持久化到 `<log_dir>/.swanlab_run_id`，resume 时以 `id + resume="allow"` 续接（local 模式仍生成新 run 目录但共享 id；offline/online 模式真正续接）。
 - F10：`_resolve_teacher_class_indices` 对无 teacher 匹配的 student 类别输出 WARNING 并列出类名。
 - F11：转换脚本改 `RETR_CCOMP` + `merge_multi_segment`，每实例一行、孔洞保留（带孔实例 IoU 0.826→0.949，受影响实例占 15.6%）。
+- F18：`DistillationModel.names` property 同步 student names 并重算 `teacher_class_indices`；resume 重建 student 时回填 checkpoint names；B/C 历史 checkpoint 的数字类名已就地修复（详见 §4.1 F18）。
 
 review 文档遗留项：1.2（独立 seg/sem gain）、1.4（o2m 可配）仍未落地，与 F 系列并行推进；1.1（NaN clamp）、1.3（E2E 日志）已应用。
 ⚠️ 兼容性说明：旧 run 的 `results.csv` 是 `train/dis_loss` 单列，新 run 为 `train/dis_feat`+`train/dis_proto` 两列，跨代对比时 dis_loss≈dis_feat+dis_proto。
