@@ -1,24 +1,20 @@
-# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
-
-# Dependabot for package version updates
+# YoloSeg-Train — Dependabot (training fork)
 # https://docs.github.com/github/administering-a-repository/configuration-options-for-dependency-updates
+#
+# pip auto-PRs are DISABLED: this fork inherits upstream export optional-deps in
+# pyproject.toml; Dependabot branches from stale bases have reverted PointRend and
+# custom training code. Bump export deps manually on main when needed.
+#
+# github-actions updates kept at low frequency — CI workflows are inherited from
+# upstream and rarely run on this fork.
 
 version: 2
 updates:
-  - package-ecosystem: pip
-    directory: "/"
-    schedule:
-      interval: monthly
-      time: "04:00"
-    open-pull-requests-limit: 10
-    labels:
-      - dependencies
-
   - package-ecosystem: github-actions
     directory: "/.github/workflows"
     schedule:
-      interval: daily
+      interval: monthly
       time: "04:00"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
     labels:
       - dependencies
