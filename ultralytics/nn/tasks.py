@@ -315,6 +315,7 @@ class BaseModel(torch.nn.Module):
             verbose (bool, optional): Whether to log the transfer progress.
         """
         model = weights["model"] if isinstance(weights, dict) else weights  # torchvision models are not dicts
+        model = getattr(model, "student_model", model)  # unwrap distillation checkpoints for finetune/init loading
         csd = model.float().state_dict()  # checkpoint state_dict as FP32
         updated_csd = intersect_dicts(csd, self.state_dict())  # intersect
         self.load_state_dict(updated_csd, strict=False)  # load
@@ -322,7 +323,7 @@ class BaseModel(torch.nn.Module):
         first_conv = "model.0.conv.weight"  # hard-coded to yolo models for now
         # mostly used to boost multi-channel training
         state_dict = self.state_dict()
-        if first_conv not in updated_csd and first_conv in state_dict:
+        if first_conv not in updated_csd and first_conv in state_dict and first_conv in csd:
             c1, c2, h, w = state_dict[first_conv].shape
             cc1, cc2, ch, cw = csd[first_conv].shape
             if ch == h and cw == w:
@@ -1934,9 +1935,15 @@ def parse_model(d, ch, verbose=True):
                 OBB26,
             }
         ):
+            point_hidden = None
+            if m is Segment26 and len(args) > 3:
+                point_hidden = args[3]
+                args = args[:3]
             args.extend([reg_max, end2end, [ch[x] for x in f]])
             if m is Segment or m is YOLOESegment or m is Segment26 or m is YOLOESegment26:
                 args[2] = make_divisible(min(args[2], max_channels) * width, 8)
+            if point_hidden is not None:
+                args.append(make_divisible(min(point_hidden, max_channels) * width, 8))
             if m in {Detect, YOLOEDetect, Segment, Segment26, YOLOESegment, YOLOESegment26, Pose, Pose26, OBB, OBB26}:
                 m.legacy = legacy
         elif m is SemanticSegment:

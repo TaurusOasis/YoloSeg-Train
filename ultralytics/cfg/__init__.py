@@ -198,6 +198,12 @@ CFG_FLOAT_KEYS = frozenset(
         "cls_pw",
         "dfl",
         "dis",
+        "seg_comp",
+        "seg_bnd",
+        "seg_point",
+        "seg_point_roi",
+        "seg_point_o2o",
+        "e2e_final_o2m",
         "degrees",
         "shear",
         "time",
@@ -230,6 +236,7 @@ CFG_FRACTION_KEYS = frozenset(
         "iou",
         "fraction",
         "multi_scale",
+        "seg_point_importance",
     }
 )
 CFG_INT_KEYS = frozenset(
@@ -240,6 +247,9 @@ CFG_INT_KEYS = frozenset(
         "seed",
         "close_mosaic",
         "mask_ratio",
+        "seg_point_num",
+        "seg_point_oversample",
+        "seg_point_subdiv_k",
         "max_det",
         "vid_stride",
         "line_width",
@@ -279,7 +289,12 @@ CFG_BOOL_KEYS = frozenset(
         "simplify",
         "nms",
         "profile",
+        "dali",
         "end2end",
+        "seg_point_refine",
+        "seg_point_boundary",
+        "seg_point_refine_o2o",
+        "seg_point_refine_infer",
     }
 )
 

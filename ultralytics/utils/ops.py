@@ -13,6 +13,11 @@ import torch
 import torch.nn.functional as F
 
 from ultralytics.utils import NOT_MACOS14
+from ultralytics.utils.mask_point_sampling import (
+    calculate_uncertainty,
+    get_uncertain_point_coords_in_roi,
+    point_sample,
+)
 
 
 class Profile(contextlib.ContextDecorator):
@@ -485,6 +490,25 @@ def crop_mask(masks: torch.Tensor, boxes: torch.Tensor) -> torch.Tensor:
         return masks * ((r >= x1) * (r < x2) * (c >= y1) * (c < y2))
 
 
+def sobel_magnitude(x: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    """Per-pixel Sobel gradient magnitude of a (N, H, W) or (N, 1, H, W) tensor.
+
+    Returns:
+        (torch.Tensor): (N, H, W) float32 |grad| via fixed 3x3 Sobel kernels (replicate pad).
+    """
+    x4 = x.unsqueeze(1).float() if x.dim() == 3 else x.float()
+    device, dtype = x4.device, x4.dtype
+    kx = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], device=device, dtype=dtype).view(1, 1, 3, 3)
+    ky = kx.transpose(2, 3)
+    # Force fp32 for the gradient convs so bf16 autocast cannot quietly downgrade them (F21 fp32-internal).
+    with torch.autocast(device_type=device.type, enabled=False):
+        x4 = F.pad(x4, (1, 1, 1, 1), mode="replicate")
+        gx = F.conv2d(x4, kx)
+        gy = F.conv2d(x4, ky)
+        mag = torch.sqrt(gx * gx + gy * gy + eps) - eps**0.5
+    return mag.clamp_min(0).squeeze(1)
+
+
 def process_mask(protos, masks_in, bboxes, shape, upsample: bool = False):
     """Apply masks to bounding boxes using mask head output.
 
@@ -529,6 +553,99 @@ def process_mask_native(protos, masks_in, bboxes, shape):
     masks = scale_masks(masks[None], shape)[0]  # NHW
     masks = crop_mask(masks, bboxes)  # NHW
     return masks.gt_(0.0).byte()
+
+
+def _scatter_refine_delta(logits: torch.Tensor, coords: torch.Tensor, delta: torch.Tensor) -> torch.Tensor:
+    """Add refined point-logit deltas back into a logit map at sampled point pixels (nearest).
+
+    Inverse-ish companion to :func:`point_sample`: maps each normalized coord (align_corners=False
+    convention, pixel centers at ``(idx + 0.5) / size``) to its nearest pixel and writes the refined
+    logit there. Non-sampled pixels keep their bilinear-upsampled value, so only uncertain points
+    are overridden. Nearest-pixel (not bilinear-weighted 4-neighbor) scatter is an acceptable
+    approximation for a thresholded binary mask; collisions resolve to last-write.
+
+    Args:
+        logits (torch.Tensor): (N, Hk, Wk) logit map to refine in place (a clone is returned).
+        coords (torch.Tensor): (N, P, 2) normalized point coords in [0, 1] (x, y).
+        delta (torch.Tensor): (N, P) refined-minus-coarse logits at those points.
+
+    Returns:
+        (torch.Tensor): (N, Hk, Wk) refined logit map.
+    """
+    n, hk, wk = logits.shape
+    rows = (coords[..., 1] * hk - 0.5).round().long().clamp(0, hk - 1)
+    cols = (coords[..., 0] * wk - 0.5).round().long().clamp(0, wk - 1)
+    idx_n = torch.arange(n, device=logits.device)[:, None].expand_as(rows)
+    out = logits.clone()
+    out[idx_n, rows, cols] = out[idx_n, rows, cols] + delta.to(logits.dtype)
+    return out
+
+
+def process_mask_pointrend(
+    protos: torch.Tensor,
+    masks_in: torch.Tensor,
+    bboxes: torch.Tensor,
+    shape: tuple[int, int],
+    point_head,
+    point_feats: torch.Tensor,
+    num_points: int = 112,
+    oversample_ratio: int = 3,
+    importance_ratio: float = 0.75,
+    subdivisions: int = 3,
+    roi_margin: float = 0.0,
+) -> torch.Tensor:
+    """PointRend iterative point-refine subdivision (PyTorch-only inference postprocess).
+
+    Coarse mask logits (``masks_in @ protos``) are cropped at proto resolution and directly
+    upsampled to ``shape`` like :func:`process_mask`. Each pass then samples uncertain points
+    inside each predicted bbox ROI, predicts a refined point logit, and scatters only the
+    ``refined - coarse`` delta. With the point head's identity-residual zero-init, all deltas are
+    zero, so the output is identical to the standard process_mask path before point-head training.
+
+    Args:
+        protos (torch.Tensor): (mask_dim, mh, mw) prototypes.
+        masks_in (torch.Tensor): (N, mask_dim) coefficients (post-NMS).
+        bboxes (torch.Tensor): (N, 4) xyxy in the ``shape`` (image) coordinate space.
+        shape (tuple): Target (h, w) for the final mask.
+        point_head (nn.Module): PointHeadMLP that refines point logits from fine features.
+        point_feats (torch.Tensor): (1, C, Hf, Wf) per-image fine feature map (P3 = feats[0]).
+        num_points (int): Uncertain points sampled per subdivision pass.
+        oversample_ratio (int): Oversample ratio for uncertainty point sampling.
+        importance_ratio (float): Fraction of uncertainty-selected points.
+        subdivisions (int): Full-resolution point-refine passes (>=1).
+        roi_margin (float): Fractional bbox margin for ROI point sampling in normalized image coords.
+
+    Returns:
+        (torch.Tensor): (N, h, w) uint8 binary masks at ``shape`` following process_mask crop/upsample semantics.
+    """
+    c, mh, mw = protos.shape
+    n = masks_in.shape[0]
+    h, w = shape
+    if n == 0:
+        return torch.zeros((0, h, w), dtype=torch.uint8, device=protos.device)
+    logits = (masks_in @ protos.float().view(c, -1)).view(n, mh, mw)  # (N, mh, mw) coarse
+    ratios = torch.tensor([[mw / w, mh / h, mw / w, mh / h]], device=bboxes.device, dtype=bboxes.dtype)
+    logits = crop_mask(logits, boxes=bboxes * ratios)
+    logits = F.interpolate(logits.unsqueeze(1), (h, w), mode="bilinear", align_corners=False).squeeze(1)
+    feats = point_feats.to(device=logits.device, dtype=logits.dtype).expand(n, -1, -1, -1)  # (N, C, Hf, Wf)
+    boxes_norm = bboxes / torch.tensor([w, h, w, h], device=bboxes.device, dtype=bboxes.dtype)
+    k = max(1, int(subdivisions))
+    for _ in range(k):
+        logits4 = logits.unsqueeze(1)
+        coords = get_uncertain_point_coords_in_roi(
+            logits4.detach(),
+            calculate_uncertainty,
+            num_points,
+            oversample_ratio,
+            importance_ratio,
+            boxes_norm,
+            margin=roi_margin,
+        )  # (N, P, 2)
+        feat = point_sample(feats, coords, align_corners=False)  # (N, C, P)
+        coarse_at = point_sample(logits4, coords, align_corners=False).squeeze(1)  # (N, P)
+        refined = point_head(feat, coarse_at)  # (N, P)
+        logits = _scatter_refine_delta(logits, coords, refined - coarse_at)  # (N, h, w)
+    return logits.gt_(0.0).byte()
 
 
 def scale_masks(

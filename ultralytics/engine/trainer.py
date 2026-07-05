@@ -811,6 +811,13 @@ class BaseTrainer:
         elif self.args.pretrained is False and not self.resume:
             weights = None
 
+        # finetuning from a distillation checkpoint without distillation: unwrap the student (the teacher is
+        # stripped from saved checkpoints and no distill_model was requested, so there is nothing to rebuild)
+        if isinstance(weights, DistillationModel) and not (weights.teacher_model or self.args.distill_model):
+            if RANK in {-1, 0}:
+                LOGGER.info("Loaded a distillation checkpoint without distill_model; finetuning the student only.")
+            weights = weights.student_model
+
         # rebuild DistillationModel from resuming checkpoint
         if isinstance(weights, DistillationModel):
             if RANK in {-1, 0}:
@@ -1000,6 +1007,20 @@ class BaseTrainer:
                     "dis_proto",
                     "distill_warmup_epochs",
                     "distill_loss_clip",
+                    "seg_comp",
+                    "seg_bnd",
+                    "seg_point",
+                    "seg_point_refine",
+                    "seg_point_num",
+                    "seg_point_oversample",
+                    "seg_point_importance",
+                    "seg_point_roi",
+                    "seg_point_boundary",
+                    "seg_point_o2o",
+                    "seg_point_refine_o2o",
+                    "seg_point_refine_infer",
+                    "seg_point_subdiv_k",
+                    "e2e_final_o2m",
                 )  # allow arg updates to reduce memory or update device on resume
                 applied = []
                 for k in whitelist:

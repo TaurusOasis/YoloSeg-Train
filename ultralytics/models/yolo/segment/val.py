@@ -45,6 +45,8 @@ class SegmentationValidator(DetectionValidator):
         """
         super().__init__(dataloader, save_dir, args, _callbacks)
         self.process = None
+        self.point_head = None  # Segment26 point head for inference subdivision, set in init_metrics
+        self.pointrend_active = False
         self.args.task = "segment"
         self.metrics = SegmentMetrics()
 
@@ -72,6 +74,62 @@ class SegmentationValidator(DetectionValidator):
             check_requirements("faster-coco-eval>=1.6.7")
         # More accurate vs faster
         self.process = ops.process_mask_native if self.args.save_json or self.args.save_txt else ops.process_mask
+        # Capture the Segment26 point head (if any) for inference subdivision. `model` is unwrap_model(model):
+        # a raw SegmentationModel in-training (head = model.model[-1]) or an AutoBackend standalone
+        # (head = model.model.model[-1]). None for pre-PointRend / exported backends -> subdivision disabled.
+        self.point_head = self._resolve_point_head(model)
+
+    @staticmethod
+    def _resolve_point_head(model: torch.nn.Module):
+        """Return the Segment26 point head from a raw model or an AutoBackend wrapper, else None.
+
+        Tries the in-training path (``model.model[-1]``) then the AutoBackend path
+        (``model.model.model[-1]``); returns the head's ``point_head`` submodule if present.
+        """
+        if getattr(model, "format", "pt") != "pt":
+            return None
+        for getter in (lambda: model.model[-1], lambda: model.model.model[-1]):
+            try:
+                head = getter()
+            except (AttributeError, TypeError, IndexError):
+                head = None
+            if head is not None:
+                point_head = getattr(head, "point_head", None)
+                if point_head is not None:
+                    return point_head
+        return None
+
+    def _uses_pointrend(self) -> bool:
+        """Return True when validation should compare refined PointRend masks."""
+        return (
+            bool(self.args.seg_point_refine_infer)
+            and self.point_head is not None
+            and self.process is not ops.process_mask_native
+        )
+
+    @staticmethod
+    def _mask_proto(proto):
+        """Return mask prototypes from heads that may also emit auxiliary semantic outputs."""
+        return proto[0] if isinstance(proto, (list, tuple)) else proto
+
+    def _extract_pointrend(self, preds) -> tuple | None:
+        """Extract (point_head, batch P3 feats) when inference point-refine is enabled, else None.
+
+        Mirrors :meth:`SegmentationPredictor._extract_pointrend`: only the PyTorch backend carries the
+        head dict (with ``feats``) in ``preds[1]``; exported backends return ``[det, proto]`` and
+        subdivision auto-disables. Returns None unless a point head and fine feats are both available.
+        """
+        if not self._uses_pointrend():
+            return None
+        if not (isinstance(preds, (list, tuple)) and len(preds) > 1 and isinstance(preds[1], dict)):
+            return None
+        feats_dict = preds[1]
+        if "one2one" in feats_dict:  # end2end: feats nested under one2one
+            feats_dict = feats_dict["one2one"]
+        feats = feats_dict.get("feats")
+        if not feats:
+            return None
+        return self.point_head, feats[0]  # P3 = finest neck feature, shape (B, C, Hf, Wf)
 
     def get_desc(self) -> str:
         """Return a formatted description of evaluation metrics."""
@@ -98,20 +156,43 @@ class SegmentationValidator(DetectionValidator):
         Returns:
             (list[dict[str, torch.Tensor]]): Processed detection predictions with masks.
         """
-        proto = preds[0][1] if isinstance(preds[0], tuple) else preds[1]
+        proto = self._mask_proto(preds[0][1] if isinstance(preds[0], tuple) else preds[1])
+        pointrend = self._extract_pointrend(preds)  # (point_head, batch P3) or None; extracted before preds rebind
         preds = super().postprocess(preds[0])
         imgsz = [4 * x for x in proto.shape[2:]]  # get image size from proto
+        # Inference subdivision only applies on the standard (non-native) path: process_mask_pointrend
+        # emits letterboxed full-resolution masks, while native JSON/TXT keeps the original-resolution path.
+        pointrend = pointrend if self.process is ops.process_mask else None
+        self.pointrend_active = pointrend is not None
         for i, pred in enumerate(preds):
             coefficient = pred.pop("extra")
-            pred["masks"] = (
-                self.process(proto[i], coefficient, pred["bboxes"], shape=imgsz)
-                if coefficient.shape[0]
-                else torch.zeros(
-                    (0, *(imgsz if self.process is ops.process_mask_native else proto.shape[2:])),
+            if coefficient.shape[0]:
+                if pointrend is not None:
+                    point_head, batch_feats = pointrend
+                    pred["masks"] = ops.process_mask_pointrend(
+                        proto[i],
+                        coefficient,
+                        pred["bboxes"],
+                        shape=imgsz,
+                        point_head=point_head,
+                        point_feats=batch_feats[i : i + 1],
+                        num_points=int(self.args.seg_point_num),
+                        oversample_ratio=int(self.args.seg_point_oversample),
+                        importance_ratio=float(self.args.seg_point_importance),
+                        subdivisions=int(self.args.seg_point_subdiv_k),
+                        roi_margin=max(float(self.args.seg_point_roi), 0.0),
+                    )
+                else:
+                    pred["masks"] = self.process(proto[i], coefficient, pred["bboxes"], shape=imgsz)
+            else:
+                mask_shape = (
+                    imgsz if pointrend is not None or self.process is ops.process_mask_native else proto.shape[2:]
+                )
+                pred["masks"] = torch.zeros(
+                    (0, *mask_shape),
                     dtype=torch.uint8,
                     device=pred["bboxes"].device,
                 )
-            )
         return preds
 
     def _prepare_batch(self, si: int, batch: dict[str, Any]) -> dict[str, Any]:
@@ -133,7 +214,8 @@ class SegmentationValidator(DetectionValidator):
         else:
             masks = batch["masks"][batch["batch_idx"] == si]
         if nl:
-            mask_size = [s if self.process is ops.process_mask_native else s // 4 for s in prepared_batch["imgsz"]]
+            full_res_masks = self.process is ops.process_mask_native or self.pointrend_active
+            mask_size = [s if full_res_masks else s // 4 for s in prepared_batch["imgsz"]]
             if masks.shape[1:] != mask_size:
                 masks = F.interpolate(masks[None], mask_size, mode="bilinear", align_corners=False)[0]
                 masks = masks.gt_(0.5)

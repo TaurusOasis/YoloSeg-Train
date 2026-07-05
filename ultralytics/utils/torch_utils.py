@@ -1012,6 +1012,12 @@ def attempt_compile(
     if mode is True:
         mode = "default"
     prefix = colorstr("compile:")
+    if device.type == "cuda":
+        try:
+            import triton  # noqa: F401
+        except Exception as e:
+            LOGGER.warning(f"{prefix} Triton unavailable for CUDA torch.compile, continuing uncompiled: {e}")
+            return model
     LOGGER.info(f"{prefix} starting torch.compile with '{mode}' mode...")
     if mode == "max-autotune":
         LOGGER.warning(f"{prefix} mode='{mode}' not recommended, using mode='max-autotune-no-cudagraphs' instead")

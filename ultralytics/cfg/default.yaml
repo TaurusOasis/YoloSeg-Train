@@ -37,6 +37,7 @@ fraction: 1.0 # (float) fraction of training dataset to use (1.0 = all)
 profile: False # (bool) profile ONNX/TensorRT speeds during training for loggers
 freeze: # (int | list, optional) freeze first N layers (int) or specific layer indices (list)
 multi_scale: 0.0 # (float) multi-scale range as a fraction of imgsz; sizes are rounded to stride multiples
+dali: False # (bool) experimental NVIDIA DALI GPU JPEG decode/resize for segment train (mosaic/mixup/copy_paste skipped)
 compile: False # (bool | str) enable torch.compile() backend='inductor'; True="default", False=off, or "default|reduce-overhead|max-autotune-no-cudagraphs"
 
 # Segmentation
@@ -107,6 +108,20 @@ box: 7.5 # (float) box loss gain
 cls: 0.5 # (float) classification loss gain
 cls_pw: 0.0 # (float) class weights power for handling class imbalance (0.0=disable, 1.0=full inverse frequency)
 dfl: 1.5 # (float) distribution focal loss gain
+seg_comp: 0.0 # (float) mask completeness (FN-asymmetric Tversky) sub-gain inside seg_loss; 0 disables
+seg_bnd: 0.0 # (float) mask boundary L2 (Sobel-align to GT) sub-gain inside seg_loss; 0 disables
+seg_point: 0.0 # (float) PointRend-style point focal+dice sub-gain inside seg_loss; 0 disables
+seg_point_refine: False # (bool) use optional Point-head MLP for seg_point logits when the model provides one
+seg_point_num: 112 # (int) number of sampled points per instance for point loss
+seg_point_oversample: 3 # (int) oversample ratio for uncertainty point sampling
+seg_point_importance: 0.75 # (float) ratio of importance-sampled (uncertain) points
+seg_point_roi: 0.0 # (float) point-sampling ROI: >=0 restricts to bbox+margin (0.0=exact bbox); <0 = legacy full-grid
+seg_point_boundary: False # (bool) bias ROI point sampling to GT Sobel boundary band (multinomial); forces ROI on
+seg_point_o2o: 1.0 # (float) seg_point multiplier on E2E one2one; set 0 for one2many-only point supervision
+seg_point_refine_o2o: True # (bool) allow Point-head MLP on the E2E one2one branch; false keeps one2one point loss Lite
+seg_point_refine_infer: False # (bool) enable PointRend iterative point-refine subdivision at inference (PyTorch-only)
+seg_point_subdiv_k: 3 # (int) inference point-refine subdivision passes (0/1 = single full-res refine)
+e2e_final_o2m: 0.1 # (float) final one2many loss weight in E2E schedule; raise for boundary/refine finetunes
 pose: 12.0 # (float) pose loss gain (pose tasks)
 kobj: 1.0 # (float) keypoint objectness loss gain (pose tasks)
 rle: 1.0 # (float) rle loss gain (pose tasks)

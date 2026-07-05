@@ -91,6 +91,16 @@ class DetectionTrainer(BaseTrainer):
         assert mode in {"train", "val"}, f"Mode must be 'train' or 'val', not {mode}."
         with torch_distributed_zero_first(rank):  # init dataset *.cache only once if DDP
             dataset = self.build_dataset(dataset_path, mode, batch_size)
+        if (
+            mode == "train"
+            and getattr(self.args, "dali", False)
+            and self.args.task == "segment"
+        ):
+            from ultralytics.data.dali_seg import build_dali_seg_dataloader, dali_supported
+
+            if not dali_supported():
+                raise ImportError("dali=True requires nvidia-dali (see docs/en/guides/nvidia-dali.md)")
+            return build_dali_seg_dataloader(dataset, batch=batch_size, rank=rank, hyp=self.args)
         shuffle = mode == "train"
         if getattr(dataset, "rect", False) and shuffle and not np.all(dataset.batch_shapes == dataset.batch_shapes[0]):
             LOGGER.warning("'rect=True' is incompatible with DataLoader shuffle, setting shuffle=False")
@@ -116,6 +126,7 @@ class DetectionTrainer(BaseTrainer):
         for k, v in batch.items():
             if isinstance(v, torch.Tensor):
                 batch[k] = v.to(self.device, non_blocking=self.device.type == "cuda")
+        batch.pop("dali", False)  # DALI currently performs decode/resize only; keep normalization identical.
         batch["img"] = batch["img"].float() / 255
         if self.args.multi_scale > 0.0:
             imgs = batch["img"]

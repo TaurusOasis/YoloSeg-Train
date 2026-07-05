@@ -11,7 +11,17 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ultralytics.utils.metrics import CITYSCAPES_WEIGHT, OKS_SIGMA, RLE_WEIGHT
-from ultralytics.utils.ops import crop_mask, xywh2xyxy, xyxy2xywh
+from ultralytics.utils.mask_boundary_loss import boundary_l2_loss_per_instance
+from ultralytics.utils.mask_completeness_loss import tversky_loss_per_instance
+from ultralytics.utils.mask_point_sampling import (
+    calculate_uncertainty,
+    get_uncertain_point_coords_in_roi,
+    get_uncertain_point_coords_with_randomness,
+    point_dice_loss_per_instance,
+    point_sample,
+    point_sigmoid_focal_loss_per_instance,
+)
+from ultralytics.utils.ops import crop_mask, sobel_magnitude, xywh2xyxy, xyxy2xywh
 from ultralytics.utils.tal import RotatedTaskAlignedAssigner, TaskAlignedAssigner, dist2bbox, dist2rbox, make_anchors
 from ultralytics.utils.torch_utils import autocast
 
@@ -490,11 +500,38 @@ class v8SegmentationLoss(v8DetectionLoss):
         super().__init__(model, tal_topk, tal_topk2)
         self.overlap = model.args.overlap_mask
         self.bcedice_loss = BCEDiceLoss(weight_bce=0.5, weight_dice=0.5)
+        self.point_head = getattr(model.model[-1], "point_head", None)
+        self.loss_branch = "default"
+
+    def hyp_get(self, key: str, default: Any = None) -> Any:
+        """Return a hyperparameter value from dict-like or namespace args."""
+        return self.hyp.get(key, default) if hasattr(self.hyp, "get") else getattr(self.hyp, key, default)
+
+    def _point_loss_gain(self) -> float:
+        """Return branch-aware seg_point gain."""
+        point_w = float(self.hyp_get("seg_point", 0.0))
+        if getattr(self, "loss_branch", "default") == "one2one":
+            point_w *= float(self.hyp_get("seg_point_o2o", 1.0))
+        return point_w
+
+    def _point_refine_enabled(self) -> bool:
+        """Return whether this branch should use the Point-head MLP."""
+        enabled = bool(self.hyp_get("seg_point_refine", False))
+        if getattr(self, "loss_branch", "default") == "one2one":
+            enabled = enabled and bool(self.hyp_get("seg_point_refine_o2o", True))
+        return enabled
 
     def loss(self, preds: dict[str, torch.Tensor], batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         """Calculate and return the combined loss for detection and segmentation."""
         pred_masks, proto = preds["mask_coefficient"].permute(0, 2, 1).contiguous(), preds["proto"]
         loss = torch.zeros(5, device=self.device)  # box, seg, cls, dfl, semantic
+        point_refine_dummy = preds.get("point_refine_dummy")
+        point_w = self._point_loss_gain()
+        point_feats = (
+            preds["feats"][0]
+            if point_w > 0.0 and self._point_refine_enabled() and self.point_head is not None
+            else None
+        )
         if isinstance(proto, tuple) and len(proto) == 2:
             proto, pred_semantic = proto
         else:
@@ -523,6 +560,8 @@ class v8SegmentationLoss(v8DetectionLoss):
                 proto,
                 pred_masks,
                 imgsz,
+                point_w=point_w,
+                point_feats=point_feats,
             )
             if pred_semantic is not None:
                 sem_masks = batch["sem_masks"].to(self.device)  # NxHxW
@@ -548,12 +587,34 @@ class v8SegmentationLoss(v8DetectionLoss):
             if pred_semantic is not None:
                 loss[4] += (pred_semantic * 0).sum()
 
+        if point_refine_dummy is not None:
+            loss[1] = loss[1] + point_refine_dummy
+
         loss[1] *= self.hyp.box  # seg gain
         return loss * batch_size, loss.detach()  # loss(box, seg, cls, dfl, semantic)
 
     @staticmethod
     def single_mask_loss(
-        gt_mask: torch.Tensor, pred: torch.Tensor, proto: torch.Tensor, xyxy: torch.Tensor, area: torch.Tensor
+        gt_mask: torch.Tensor,
+        pred: torch.Tensor,
+        proto: torch.Tensor,
+        xyxy: torch.Tensor,
+        area: torch.Tensor,
+        *,
+        comp_w: float = 0.0,
+        bnd_w: float = 0.0,
+        tversky_alpha: float = 0.3,
+        tversky_beta: float = 0.7,
+        tversky_gamma: float = 0.75,
+        sobel_band: bool = True,
+        point_w: float = 0.0,
+        num_points: int = 112,
+        oversample_ratio: int = 3,
+        importance_ratio: float = 0.75,
+        point_head: nn.Module | None = None,
+        point_feats: torch.Tensor | None = None,
+        roi_margin: float = 0.0,
+        boundary_w: bool = False,
     ) -> torch.Tensor:
         """Compute the instance segmentation loss for a single image.
 
@@ -561,8 +622,24 @@ class v8SegmentationLoss(v8DetectionLoss):
             gt_mask (torch.Tensor): Ground truth mask of shape (N, H, W), where N is the number of objects.
             pred (torch.Tensor): Predicted mask coefficients of shape (N, 32).
             proto (torch.Tensor): Prototype masks of shape (32, H, W).
-            xyxy (torch.Tensor): Ground truth bounding boxes in xyxy format, normalized to [0, 1], of shape (N, 4).
-            area (torch.Tensor): Area of each ground truth bounding box of shape (N,).
+            xyxy (torch.Tensor): Ground truth bounding boxes in xyxy format, mask pixel coords, shape (N, 4).
+            area (torch.Tensor): Normalized bbox area of shape (N,).
+            comp_w (float): Focal-Tversky completeness sub-gain; 0 disables.
+            bnd_w (float): Sobel boundary alignment sub-gain; 0 disables.
+            point_w (float): PointRend-style point focal+dice sub-gain; 0 disables.
+            num_points (int): Sampled points per instance when point_w > 0.
+            oversample_ratio (int): Oversample factor for uncertainty point selection.
+            importance_ratio (float): Fraction of points chosen by uncertainty.
+            point_head (nn.Module | None): Optional PointRend-style MLP head for refined point logits.
+            point_feats (torch.Tensor | None): Fine feature map, either shared per-image (1, C, H, W)
+                (sampled with merged coords, memory-safe for dense images) or per-instance (N, C, H, W).
+            roi_margin (float): Point-sampling ROI mode. >= 0 restricts uncertainty sampling to each
+                instance bbox expanded by this fractional margin (0.0 = exact bbox); < 0 falls back to
+                the legacy full-grid [0, 1]^2 sampler (for ablation parity with the old seg_point).
+            boundary_w (bool): Bias the ROI candidate draw toward the GT Sobel boundary band via a
+                multinomial over per-instance Sobel magnitude restricted to the bbox. Forces ROI on
+                (effective margin = max(roi_margin, 0)); ignored only when roi_margin < 0 and this
+                is False. Needs GT, so it is computed under no_grad alongside coord sampling.
 
         Returns:
             (torch.Tensor): The calculated mask loss for a single image.
@@ -573,7 +650,87 @@ class v8SegmentationLoss(v8DetectionLoss):
         """
         pred_mask = torch.einsum("in,nhw->ihw", pred, proto)  # (n, 32) @ (32, 80, 80) -> (n, 80, 80)
         loss = F.binary_cross_entropy_with_logits(pred_mask, gt_mask, reduction="none")
-        return (crop_mask(loss, xyxy).mean(dim=(1, 2)) / area).sum()
+        bce_term = (crop_mask(loss, xyxy).mean(dim=(1, 2)) / area).sum()
+        if comp_w == 0.0 and bnd_w == 0.0 and point_w == 0.0:
+            return bce_term
+
+        total = bce_term
+
+        if comp_w > 0.0:
+            total = total + comp_w * tversky_loss_per_instance(
+                pred_mask,
+                gt_mask,
+                xyxy,
+                alpha=tversky_alpha,
+                beta=tversky_beta,
+                gamma=tversky_gamma,
+            ).sum()
+
+        if bnd_w > 0.0:
+            total = total + bnd_w * boundary_l2_loss_per_instance(
+                pred_mask,
+                gt_mask,
+                xyxy,
+                band_weight=sobel_band,
+            ).sum()
+
+        if point_w > 0.0 and pred_mask.shape[0] > 0 and num_points > 0:
+            pm4 = pred_mask.float().unsqueeze(1)
+            gm4 = gt_mask.float().unsqueeze(1)
+            with torch.no_grad():
+                # boundary_w forces ROI on (effective margin = max(roi_margin, 0)); only the
+                # legacy full-grid path is taken when neither ROI nor boundary weighting is asked
+                # for (roi_margin < 0 and not boundary_w).
+                use_roi = roi_margin >= 0.0 or boundary_w
+                if use_roi:
+                    eff_margin = max(roi_margin, 0.0) if boundary_w else roi_margin
+                    # Restrict uncertainty sampling to each instance bbox (expanded by eff_margin,
+                    # clamped to [0, 1]) so points land on the object/boundary, not background.
+                    h_m, w_m = pred_mask.shape[-2], pred_mask.shape[-1]
+                    boxes_norm = xyxy / torch.tensor(
+                        [w_m, h_m, w_m, h_m], device=xyxy.device, dtype=xyxy.dtype
+                    )
+                    # GT Sobel magnitude biases the candidate draw toward the true boundary band.
+                    weight_map = sobel_magnitude(gt_mask) if boundary_w else None
+                    coords = get_uncertain_point_coords_in_roi(
+                        pm4.detach(),
+                        calculate_uncertainty,
+                        num_points,
+                        oversample_ratio,
+                        importance_ratio,
+                        boxes_norm,
+                        margin=eff_margin,
+                        weight_map=weight_map,
+                    )
+                else:
+                    coords = get_uncertain_point_coords_with_randomness(
+                        pm4.detach(),
+                        calculate_uncertainty,
+                        num_points,
+                        oversample_ratio,
+                        importance_ratio,
+                    )
+                pg = point_sample(gm4, coords, align_corners=False).squeeze(1)
+            coarse = point_sample(pm4, coords, align_corners=False).squeeze(1)
+            if point_head is not None and point_feats is not None:
+                if point_feats.shape[0] == 1 and coords.shape[0] > 1:
+                    # Sample the shared per-image feature map once with merged coords instead of
+                    # grid_sample on an (N, C, H, W) expand: the expanded view is free in forward
+                    # but its backward materializes a full contiguous gradient (GBs for dense
+                    # images), while the merged draw keeps both passes at (N*P) cost.
+                    n_i, p_i = coords.shape[0], coords.shape[1]
+                    pf = point_sample(point_feats, coords.reshape(1, n_i * p_i, 2), align_corners=False)
+                    pf = pf.reshape(pf.shape[1], n_i, p_i).permute(1, 0, 2)  # (N, C, P)
+                else:
+                    pf = point_sample(point_feats, coords, align_corners=False)
+                pl = point_head(pf, coarse)
+            else:
+                pl = coarse
+            focal_i = point_sigmoid_focal_loss_per_instance(pl, pg)
+            dice_i = point_dice_loss_per_instance(pl, pg)
+            total = total + point_w * (focal_i + dice_i).sum()
+
+        return total
 
     def calculate_segmentation_loss(
         self,
@@ -585,6 +742,8 @@ class v8SegmentationLoss(v8DetectionLoss):
         proto: torch.Tensor,
         pred_masks: torch.Tensor,
         imgsz: torch.Tensor,
+        point_w: float | None = None,
+        point_feats: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Calculate the loss for instance segmentation.
 
@@ -597,6 +756,8 @@ class v8SegmentationLoss(v8DetectionLoss):
             proto (torch.Tensor): Prototype masks of shape (BS, 32, H, W).
             pred_masks (torch.Tensor): Predicted masks for each anchor of shape (BS, N_anchors, 32).
             imgsz (torch.Tensor): Size of the input image as a tensor of shape (2), i.e., (H, W).
+            point_w (float | None): Optional precomputed branch-aware point loss gain.
+            point_feats (torch.Tensor | None): Optional fine features for PointRend-style point refinement.
 
         Returns:
             (torch.Tensor): The calculated loss for instance segmentation.
@@ -608,6 +769,7 @@ class v8SegmentationLoss(v8DetectionLoss):
         """
         _, _, mask_h, mask_w = proto.shape
         loss = 0
+        point_w = self._point_loss_gain() if point_w is None else float(point_w)
 
         # Normalize to 0-1
         target_bboxes_normalized = target_bboxes / imgsz[[1, 0, 1, 0]]
@@ -627,9 +789,30 @@ class v8SegmentationLoss(v8DetectionLoss):
                     gt_mask = gt_mask.float()
                 else:
                     gt_mask = masks[batch_idx.view(-1) == i][mask_idx]
+                point_feats_i = None
+                if point_feats is not None:
+                    # Keep the shared per-image map as (1, C, H, W); single_mask_loss samples it
+                    # with merged coords. Expanding to (n_inst, C, H, W) here made grid_sample's
+                    # backward materialize a contiguous (n_inst, C, H, W) gradient and OOM on
+                    # dense images (recipe200 finetune, batch 84).
+                    point_feats_i = point_feats[i : i + 1]
 
                 loss += self.single_mask_loss(
-                    gt_mask, pred_masks_i[fg_mask_i], proto_i, mxyxy_i[fg_mask_i], marea_i[fg_mask_i]
+                    gt_mask,
+                    pred_masks_i[fg_mask_i],
+                    proto_i,
+                    mxyxy_i[fg_mask_i],
+                    marea_i[fg_mask_i],
+                    comp_w=self.hyp_get("seg_comp", 0.0),
+                    bnd_w=self.hyp_get("seg_bnd", 0.0),
+                    point_w=point_w,
+                    num_points=int(self.hyp_get("seg_point_num", 112)),
+                    oversample_ratio=int(self.hyp_get("seg_point_oversample", 3)),
+                    importance_ratio=float(self.hyp_get("seg_point_importance", 0.75)),
+                    point_head=getattr(self, "point_head", None),
+                    point_feats=point_feats_i,
+                    roi_margin=float(self.hyp_get("seg_point_roi", 0.0)),
+                    boundary_w=bool(self.hyp_get("seg_point_boundary", False)),
                 )
 
             # WARNING: lines below prevents Multi-GPU DDP 'unused gradient' PyTorch errors, do not remove
@@ -1185,7 +1368,12 @@ class E2ELoss:
         self.o2o = self.total - self.o2m
         self.o2m_copy = self.o2m
         # final gain
-        self.final_o2m = 0.1
+        hyp = self.one2one.hyp
+        self.final_o2m = float(
+            hyp.get("e2e_final_o2m", 0.1) if hasattr(hyp, "get") else getattr(hyp, "e2e_final_o2m", 0.1)
+        )
+        self.one2many.loss_branch = "one2many"
+        self.one2one.loss_branch = "one2one"
 
     def __call__(self, preds: Any, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         """Calculate the sum of the loss for box, cls and dfl multiplied by batch size."""

@@ -24,12 +24,15 @@ __all__ = (
     "OBB",
     "Classify",
     "Detect",
+    "PointHeadMLP",
     "Pose",
     "RTDETRDecoder",
     "Segment",
+    "Segment26",
     "SemanticSegment",
     "YOLOEDetect",
     "YOLOESegment",
+    "YOLOESegment26",
     "v10Detect",
 )
 
@@ -262,6 +265,52 @@ class Detect(nn.Module):
         self.cv2 = self.cv3 = None
 
 
+class PointHeadMLP(nn.Module):
+    """PointRend-style point head that refines coarse mask logits at sampled points."""
+
+    def __init__(self, in_channels: int, hidden_channels: int = 128):
+        """Initialize a small 1D MLP over sampled point features.
+
+        Args:
+            in_channels (int): Number of sampled fine-feature channels.
+            hidden_channels (int): Hidden channels for the point MLP. Values <= 0 disable construction upstream.
+        """
+        super().__init__()
+        self.in_channels = in_channels
+        self.hidden_channels = hidden_channels
+        self.mlp = nn.Sequential(
+            nn.Conv1d(in_channels + 1, hidden_channels, 1),
+            nn.ReLU(inplace=True),
+            nn.Conv1d(hidden_channels, hidden_channels, 1),
+            nn.ReLU(inplace=True),
+            nn.Conv1d(hidden_channels, 1, 1),
+        )
+        # Start as an identity residual: refined logits == coarse logits.
+        nn.init.zeros_(self.mlp[-1].weight)
+        nn.init.zeros_(self.mlp[-1].bias)
+
+    def forward(self, point_feats: torch.Tensor, coarse_logits: torch.Tensor) -> torch.Tensor:
+        """Return refined point logits.
+
+        Args:
+            point_feats (torch.Tensor): Sampled fine features with shape (N, C, P).
+            coarse_logits (torch.Tensor): Coarse mask logits at sampled points with shape (N, P) or (N, 1, P).
+
+        Returns:
+            (torch.Tensor): Refined point logits with shape (N, P).
+        """
+        if coarse_logits.dim() == 2:
+            coarse_logits = coarse_logits.unsqueeze(1)
+        point_feats = point_feats.float()
+        coarse_logits = coarse_logits.float()
+        delta = self.mlp(torch.cat((point_feats, coarse_logits), dim=1)).squeeze(1)
+        return coarse_logits.squeeze(1) + delta
+
+    def zero_loss(self) -> torch.Tensor:
+        """Return a scalar zero connected to all point-head parameters for DDP bookkeeping."""
+        return sum((p.sum() * 0.0 for p in self.parameters()), start=next(self.parameters()).new_zeros(()))
+
+
 class Segment(Detect):
     """YOLO Segment head for segmentation models.
 
@@ -387,7 +436,16 @@ class Segment26(Segment):
         >>> outputs = segment(x)
     """
 
-    def __init__(self, nc: int = 80, nm: int = 32, npr: int = 256, reg_max=16, end2end=False, ch: tuple = ()):
+    def __init__(
+        self,
+        nc: int = 80,
+        nm: int = 32,
+        npr: int = 256,
+        reg_max=16,
+        end2end=False,
+        ch: tuple = (),
+        point_hidden: int = 0,
+    ):
         """Initialize the YOLO model attributes such as the number of masks, prototypes, and the convolution layers.
 
         Args:
@@ -397,9 +455,11 @@ class Segment26(Segment):
             reg_max (int): Maximum number of DFL channels.
             end2end (bool): Whether to use end-to-end NMS-free detection.
             ch (tuple): Tuple of channel sizes from backbone feature maps.
+            point_hidden (int): Hidden channels for optional PointRend-style point-refine head. 0 disables it.
         """
         super().__init__(nc, nm, npr, reg_max, end2end, ch)
         self.proto = Proto26(ch, self.npr, self.nm, nc)  # protos
+        self.point_head = PointHeadMLP(ch[0], point_hidden) if point_hidden > 0 else None
 
     def forward(self, x: list[torch.Tensor]) -> tuple | list[torch.Tensor] | dict[str, torch.Tensor]:
         """Return model outputs and mask coefficients if training, otherwise return outputs and mask coefficients."""
@@ -412,8 +472,14 @@ class Segment26(Segment):
                 preds["one2one"]["proto"] = (
                     tuple(p.detach() for p in proto) if isinstance(proto, tuple) else proto.detach()
                 )
+                if self.training and getattr(self, "point_head", None) is not None:
+                    dummy = self.point_head.zero_loss()
+                    preds["one2many"]["point_refine_dummy"] = dummy
+                    preds["one2one"]["point_refine_dummy"] = dummy
             else:
                 preds["proto"] = proto
+                if self.training and getattr(self, "point_head", None) is not None:
+                    preds["point_refine_dummy"] = self.point_head.zero_loss()
         if self.training:
             return preds
         return (outputs, proto) if self.export else ((outputs[0], proto), preds)
