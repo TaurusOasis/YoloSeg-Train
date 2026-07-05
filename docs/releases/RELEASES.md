@@ -105,6 +105,20 @@ swanlab watch runs/segment/yolo26s-seg-coconut-b-v2-pointrend-ft60/swanlab
 python scripts/export_release_curves.py
 ```
 
+### 发布 GitHub Release（上传 best.pt）
+
+文档与曲线已入 git；**权重 `.pt` 需通过 Release 附件分发**（不入 git）。
+
+```bash
+# 需 gh token 具备 repo / releases 写权限
+bash scripts/publish_github_releases.sh
+
+# 预览命令不实际上传
+bash scripts/publish_github_releases.sh --dry-run
+```
+
+若 `gh release create` 报 `HTTP 403`，请在 GitHub → Settings → Developer settings → PAT 中勾选 **Contents: Read and write** 后重新 `gh auth login`。
+
 ## 各阶段 Release 详情
 
 ### Stage A — `stage-a-lvis-pretrain`
