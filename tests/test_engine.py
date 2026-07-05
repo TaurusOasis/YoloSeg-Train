@@ -303,8 +303,8 @@ SEG_TEACHER = next(
 def _build_seg_distill_model(dis_proto: float = 1.0, imgsz: int = 32) -> DistillationModel:
     """Build a standalone segmentation DistillationModel outside the trainer for fast unit tests.
 
-    The student is created from the config YAML, so it carries cfg-default numeric class names ({0: '0', ...})
-    that do not match the teacher, which is exactly the fixture needed to exercise class-alignment code paths.
+    The student is created from the config YAML, so it carries cfg-default numeric class names ({0: '0', ...}) that do
+    not match the teacher, which is exactly the fixture needed to exercise class-alignment code paths.
     """
     student = YOLO("yolo26n-seg.yaml").model
     args = get_cfg(DEFAULT_CFG)
@@ -546,12 +546,26 @@ def test_musgd_muon_update_handles_conv1d_weights():
 
     head = torch.nn.Conv1d(8, 4, kernel_size=1)
     # Mirror build_optimizer routing: only ndim >= 2 params enter the muon group, biases go to SGD.
-    opt = MuSGD([
-        {"params": [head.weight], "lr": 0.01, "use_muon": True,
-         "momentum": 0.9, "nesterov": True, "weight_decay": 0.0},
-        {"params": [head.bias], "lr": 0.01, "use_muon": False,
-         "momentum": 0.9, "nesterov": True, "weight_decay": 0.0},
-    ])
+    opt = MuSGD(
+        [
+            {
+                "params": [head.weight],
+                "lr": 0.01,
+                "use_muon": True,
+                "momentum": 0.9,
+                "nesterov": True,
+                "weight_decay": 0.0,
+            },
+            {
+                "params": [head.bias],
+                "lr": 0.01,
+                "use_muon": False,
+                "momentum": 0.9,
+                "nesterov": True,
+                "weight_decay": 0.0,
+            },
+        ]
+    )
     out = head(torch.randn(2, 8, 16))
     out.sum().backward()
     opt.step()
@@ -614,13 +628,16 @@ def test_mask_point_coords_in_roi():
     n, num_points = 3, 24
     logits = torch.randn(n, 1, 32, 32)
     # Instance 0: tight box [0.2,0.2]-[0.5,0.5]; 1: wide box; 2: degenerate (x2<=x1) -> full-grid fallback.
-    boxes = torch.tensor(
-        [[0.20, 0.20, 0.50, 0.50], [0.10, 0.05, 0.90, 0.95], [0.50, 0.50, 0.50, 0.50]]
-    )
+    boxes = torch.tensor([[0.20, 0.20, 0.50, 0.50], [0.10, 0.05, 0.90, 0.95], [0.50, 0.50, 0.50, 0.50]])
     margin = 0.05
     coords = get_uncertain_point_coords_in_roi(
-        logits, lambda x: -x.abs(), num_points, oversample_ratio=3, importance_sample_ratio=0.75,
-        boxes_norm=boxes, margin=margin,
+        logits,
+        lambda x: -x.abs(),
+        num_points,
+        oversample_ratio=3,
+        importance_sample_ratio=0.75,
+        boxes_norm=boxes,
+        margin=margin,
     )
     assert coords.shape == (n, num_points, 2)
     assert (coords >= 0).all() and (coords <= 1).all()
@@ -636,8 +653,9 @@ def test_mask_point_coords_in_roi():
 
 
 def test_mask_point_coords_weighted_in_roi():
-    """Blended boundary-weighted ROI sampling over-represents the GT Sobel band but keeps interior
-    points reachable; degenerate bbox -> full-grid fallback."""
+    """Blended boundary-weighted ROI sampling over-represents the GT Sobel band but keeps interior points reachable;
+    degenerate bbox -> full-grid fallback.
+    """
     from ultralytics.utils.mask_point_sampling import get_uncertain_point_coords_in_roi
 
     torch.manual_seed(0)
@@ -645,13 +663,19 @@ def test_mask_point_coords_weighted_in_roi():
     logits = torch.randn(n, 1, H, W)
     # Weight map: a thin vertical boundary band at x ~= 0.5 (high weight in column band, ~0 elsewhere).
     weight = torch.zeros(n, H, W)
-    band = (torch.arange(W).float() / W)
+    band = torch.arange(W).float() / W
     in_band = (band >= 0.45) & (band <= 0.55)  # central ~10% columns
     weight[:] = in_band[None, None].float() * 10.0  # high weight only in the band columns
     boxes = torch.tensor([[0.0, 0.0, 1.0, 1.0], [0.5, 0.5, 0.5, 0.5]])  # row 1 degenerate -> full-grid
     coords = get_uncertain_point_coords_in_roi(
-        logits, lambda x: -x.abs(), num_points, oversample_ratio=1, importance_sample_ratio=0.5,
-        boxes_norm=boxes, margin=0.0, weight_map=weight,
+        logits,
+        lambda x: -x.abs(),
+        num_points,
+        oversample_ratio=1,
+        importance_sample_ratio=0.5,
+        boxes_norm=boxes,
+        margin=0.0,
+        weight_map=weight,
     )
     assert coords.shape == (n, num_points, 2)
     assert (coords >= 0).all() and (coords <= 1).all()
@@ -709,7 +733,7 @@ def test_sobel_magnitude_constant_is_near_zero():
 
 
 def test_single_mask_loss_all_gains_disabled_matches_legacy():
-    """seg_point=0 must match the original dense BCE-only mask loss."""
+    """Seg_point=0 must match the original dense BCE-only mask loss."""
     from ultralytics.utils.loss import v8SegmentationLoss
 
     torch.manual_seed(0)
@@ -727,9 +751,7 @@ def test_single_mask_loss_all_gains_disabled_matches_legacy():
     from ultralytics.utils.ops import crop_mask
 
     legacy = (crop_mask(loss_map, xyxy).mean(dim=(1, 2)) / area).sum()
-    current = v8SegmentationLoss.single_mask_loss(
-        gt, pred, proto, xyxy, area, comp_w=0.0, bnd_w=0.0, point_w=0.0
-    )
+    current = v8SegmentationLoss.single_mask_loss(gt, pred, proto, xyxy, area, comp_w=0.0, bnd_w=0.0, point_w=0.0)
     assert torch.allclose(legacy, current)
     with_comp = v8SegmentationLoss.single_mask_loss(gt, pred, proto, xyxy, area, comp_w=1.0)
     with_bnd = v8SegmentationLoss.single_mask_loss(gt, pred, proto, xyxy, area, bnd_w=1.0)
@@ -760,7 +782,13 @@ def test_single_mask_loss_all_gains_disabled_matches_legacy():
     )
     torch.manual_seed(1)
     point_expanded = v8SegmentationLoss.single_mask_loss(
-        gt, pred, proto, xyxy, area, point_w=1.0, point_head=point_head,
+        gt,
+        pred,
+        proto,
+        xyxy,
+        area,
+        point_w=1.0,
+        point_head=point_head,
         point_feats=shared_feats.expand(n, -1, -1, -1),
     )
     assert torch.allclose(point_shared, point_expanded, atol=1e-6)
@@ -776,7 +804,7 @@ def test_single_mask_loss_all_gains_disabled_matches_legacy():
 
 
 def test_segmentation_loss_optional_hyp_injection_is_finite():
-    """calculate_segmentation_loss should pass seg_comp/seg_bnd/seg_point gains into single_mask_loss."""
+    """Calculate_segmentation_loss should pass seg_comp/seg_bnd/seg_point gains into single_mask_loss."""
     from ultralytics.utils.loss import v8SegmentationLoss
 
     torch.manual_seed(2)
@@ -817,7 +845,7 @@ def test_segmentation_loss_optional_hyp_injection_is_finite():
 
 
 def test_segmentation_loss_boundary_roi_path_is_finite():
-    """seg_point_boundary=True forces ROI on and biases sampling toward the GT Sobel band."""
+    """Seg_point_boundary=True forces ROI on and biases sampling toward the GT Sobel band."""
     from ultralytics.utils.loss import v8SegmentationLoss
 
     torch.manual_seed(3)
@@ -899,7 +927,7 @@ def test_segment26_forward_point_refine_dummy_and_detach_contract():
 
 
 def test_e2e_point_refine_backward_branch_gradient_routes():
-    """one2many should shape backbone/proto, while one2one stays on detached features/proto."""
+    """One2many should shape backbone/proto, while one2one stays on detached features/proto."""
     from ultralytics.nn.tasks import SegmentationModel
 
     def grad_sum(parameters) -> float:
@@ -961,7 +989,7 @@ def test_e2e_point_refine_backward_branch_gradient_routes():
 
 
 def test_process_mask_pointrend_basic():
-    """process_mask_pointrend returns localized binary masks at the target shape for K=1 and K=3."""
+    """Process_mask_pointrend returns localized binary masks at the target shape for K=1 and K=3."""
     from ultralytics.nn.modules import PointHeadMLP
     from ultralytics.utils.ops import process_mask, process_mask_pointrend
 
@@ -980,8 +1008,16 @@ def test_process_mask_pointrend_basic():
                 for p in head.parameters():
                     p.data.normal_(0, 0.1)
             masks = process_mask_pointrend(
-                proto, masks_in, bboxes, shape, head, feats, num_points=16,
-                oversample_ratio=2, importance_ratio=0.75, subdivisions=subdivisions,
+                proto,
+                masks_in,
+                bboxes,
+                shape,
+                head,
+                feats,
+                num_points=16,
+                oversample_ratio=2,
+                importance_ratio=0.75,
+                subdivisions=subdivisions,
             )
             assert masks.shape == (n, *shape), (masks.shape, subdivisions, zero_init)
             assert masks.dtype == torch.uint8
@@ -1005,7 +1041,7 @@ def test_process_mask_pointrend_basic():
 
 
 def test_pointrend_infer_subdivision_smoke(tmp_path):
-    """seg_point_refine_infer=True routes the predictor through process_mask_pointrend (PyTorch-only)."""
+    """Seg_point_refine_infer=True routes the predictor through process_mask_pointrend (PyTorch-only)."""
     import numpy as np
 
     from ultralytics import YOLO

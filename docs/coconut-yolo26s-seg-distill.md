@@ -8,19 +8,19 @@ COCONut is stored as COCO panoptic-style annotations, not COCO instance polygon 
 
 Available splits:
 
-| split | JSON | mask dir | images | categories | thing classes |
-| --- | --- | --- | ---: | ---: | ---: |
-| COCONut-S | `coconut_s.json` | `coconut_s/` | 118200 | 133 | 80 |
-| COCONut-B | `coconut_b.json` | `coconut_b/` | 241602 | 133 | 80 |
-| val | `relabeled_coco_val.json` | `relabeled_coco_val/` | 5000 | 133 | 80 |
+| split     | JSON                      | mask dir              | images | categories | thing classes |
+| --------- | ------------------------- | --------------------- | -----: | ---------: | ------------: |
+| COCONut-S | `coconut_s.json`          | `coconut_s/`          | 118200 |        133 |            80 |
+| COCONut-B | `coconut_b.json`          | `coconut_b/`          | 241602 |        133 |            80 |
+| val       | `relabeled_coco_val.json` | `relabeled_coco_val/` |   5000 |        133 |            80 |
 
 Image coverage under `/home/genesis/Train/Dataset/coco2017`:
 
-| split | image dirs | present | missing |
-| --- | --- | ---: | ---: |
-| COCONut-S | `train2017` | 118200 | 0 |
-| COCONut-B | `train2017`, `unlabeled2017` | 241602 | 0 |
-| val | `val2017` | 5000 | 0 |
+| split     | image dirs                   | present | missing |
+| --------- | ---------------------------- | ------: | ------: |
+| COCONut-S | `train2017`                  |  118200 |       0 |
+| COCONut-B | `train2017`, `unlabeled2017` |  241602 |       0 |
+| val       | `val2017`                    |    5000 |       0 |
 
 ## Conversion Rule
 
@@ -66,10 +66,10 @@ Both YAML files parse through `ultralytics.data.utils.check_det_dataset()` as `n
 
 Full label scans passed:
 
-| dataset | label rows | empty label files | class range | bad rows |
-| --- | ---: | ---: | ---: | ---: |
-| COCONut-S | 1347312 | 1355 | 0-79 | 0 |
-| COCONut-B | 2422292 | 2736 | 0-79 | 0 |
+| dataset   | label rows | empty label files | class range | bad rows |
+| --------- | ---------: | ----------------: | ----------: | -------: |
+| COCONut-S |    1347312 |              1355 |        0-79 |        0 |
+| COCONut-B |    2422292 |              2736 |        0-79 |        0 |
 
 ## Rebuild Commands
 

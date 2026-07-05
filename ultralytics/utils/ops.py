@@ -558,11 +558,10 @@ def process_mask_native(protos, masks_in, bboxes, shape):
 def _scatter_refine_delta(logits: torch.Tensor, coords: torch.Tensor, delta: torch.Tensor) -> torch.Tensor:
     """Add refined point-logit deltas back into a logit map at sampled point pixels (nearest).
 
-    Inverse-ish companion to :func:`point_sample`: maps each normalized coord (align_corners=False
-    convention, pixel centers at ``(idx + 0.5) / size``) to its nearest pixel and writes the refined
-    logit there. Non-sampled pixels keep their bilinear-upsampled value, so only uncertain points
-    are overridden. Nearest-pixel (not bilinear-weighted 4-neighbor) scatter is an acceptable
-    approximation for a thresholded binary mask; collisions resolve to last-write.
+    Inverse-ish companion to :func:`point_sample`: maps each normalized coord (align_corners=False convention, pixel
+    centers at ``(idx + 0.5) / size``) to its nearest pixel and writes the refined logit there. Non-sampled pixels keep
+    their bilinear-upsampled value, so only uncertain points are overridden. Nearest-pixel (not bilinear-weighted
+    4-neighbor) scatter is an acceptable approximation for a thresholded binary mask; collisions resolve to last-write.
 
     Args:
         logits (torch.Tensor): (N, Hk, Wk) logit map to refine in place (a clone is returned).
@@ -596,11 +595,10 @@ def process_mask_pointrend(
 ) -> torch.Tensor:
     """PointRend iterative point-refine subdivision (PyTorch-only inference postprocess).
 
-    Coarse mask logits (``masks_in @ protos``) are cropped at proto resolution and directly
-    upsampled to ``shape`` like :func:`process_mask`. Each pass then samples uncertain points
-    inside each predicted bbox ROI, predicts a refined point logit, and scatters only the
-    ``refined - coarse`` delta. With the point head's identity-residual zero-init, all deltas are
-    zero, so the output is identical to the standard process_mask path before point-head training.
+    Coarse mask logits (``masks_in @ protos``) are cropped at proto resolution and directly upsampled to ``shape`` like
+    :func:`process_mask`. Each pass then samples uncertain points inside each predicted bbox ROI, predicts a refined
+    point logit, and scatters only the ``refined - coarse`` delta. With the point head's identity-residual zero-init,
+    all deltas are zero, so the output is identical to the standard process_mask path before point-head training.
 
     Args:
         protos (torch.Tensor): (mask_dim, mh, mw) prototypes.

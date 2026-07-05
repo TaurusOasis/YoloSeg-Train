@@ -21,7 +21,6 @@ os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 from ultralytics import YOLO
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TRAIN_SPLIT = "coconut_b"
 DEFAULT_DATA_ROOTS = {
@@ -62,7 +61,9 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--data", type=Path, help="COCONut YOLO segment data YAML.")
     parser.add_argument("--data-root", type=Path, help="Converted COCONut YOLO dataset root.")
     parser.add_argument("--coconut-root", type=Path, default=DEFAULT_COCONUT_ROOT, help="Raw COCONut root.")
-    parser.add_argument("--image-root", type=Path, default=DEFAULT_IMAGE_ROOT, help="COCO image root with train2017/val2017.")
+    parser.add_argument(
+        "--image-root", type=Path, default=DEFAULT_IMAGE_ROOT, help="COCO image root with train2017/val2017."
+    )
     parser.add_argument("--train-split", choices=["coconut_s", "coconut_b"], default=DEFAULT_TRAIN_SPLIT)
     parser.add_argument(
         "--prepare-data",
@@ -70,7 +71,9 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         help="Force building/updating converted labels. The default data YAML is also auto-built when missing.",
     )
     parser.add_argument("--overwrite-data", action="store_true", help="Overwrite converted labels when preparing data.")
-    parser.add_argument("--prep-workers", type=int, default=16, help="Workers for COCONut conversion when --prepare-data is set.")
+    parser.add_argument(
+        "--prep-workers", type=int, default=16, help="Workers for COCONut conversion when --prepare-data is set."
+    )
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch", type=int, default=150)
     parser.add_argument("--imgsz", type=int, default=640)
@@ -117,7 +120,9 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         default=100,
         help="Early-stopping patience. Default 100 intentionally disables early stopping for the default 100 epochs.",
     )
-    parser.add_argument("--resume", nargs="?", const=True, default=False, help="Resume from the latest run or a checkpoint path.")
+    parser.add_argument(
+        "--resume", nargs="?", const=True, default=False, help="Resume from the latest run or a checkpoint path."
+    )
     parser.add_argument("--seed", type=int, default=0, help="Training random seed.")
     parser.add_argument("--no-val", action="store_true", help="Disable validation during training.")
     parser.add_argument("--exist-ok", action="store_true", help="Allow reusing the output run directory.")
@@ -129,7 +134,9 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
     )
     parser.add_argument("--swanlab-mode", default="local", choices=["local", "offline", "online", "disabled"])
     parser.add_argument("--swanlab-project", default="yolo26s-seg-coconut-distill")
-    parser.add_argument("--swanlab-run-name", help="SwanLab run name. Defaults to the checkpoint run name when resuming.")
+    parser.add_argument(
+        "--swanlab-run-name", help="SwanLab run name. Defaults to the checkpoint run name when resuming."
+    )
     parser.add_argument(
         "--swanlab-log-dir",
         type=Path,
@@ -157,8 +164,10 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
     if args.swanlab_run_name is None:
         args.swanlab_run_name = resume_dir.name if resume_dir else args.name
     if args.swanlab_log_dir is None:
-        args.swanlab_log_dir = (resume_dir.parent if resume_dir else Path(args.project)) / "swanlab" / (
-            resume_dir.name if resume_dir else args.name
+        args.swanlab_log_dir = (
+            (resume_dir.parent if resume_dir else Path(args.project))
+            / "swanlab"
+            / (resume_dir.name if resume_dir else args.name)
         )
     if args.swanlab_watch_session is None:
         args.swanlab_watch_session = f"swanlab-{args.swanlab_log_dir.name}"[:80]

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""2-GPU DDP smoke: verify point_head gradients allreduce correctly (§2.5 / design doc §10.2).
+r"""2-GPU DDP smoke: verify point_head gradients allreduce correctly (§2.5 / design doc §10.2).
 
 Launch:
   cd ultralytics && conda run -n yolo26-cu133 python -m torch.distributed.run \\
@@ -36,8 +36,12 @@ from ultralytics.utils.torch_utils import attempt_compile, unwrap_model
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--compile", action="store_true", help="Compile the model before DDP, matching trainer behavior.")
-    parser.add_argument("--boundary", action="store_true", help="Enable seg_bnd and boundary-weighted point ROI sampling.")
+    parser.add_argument(
+        "--compile", action="store_true", help="Compile the model before DDP, matching trainer behavior."
+    )
+    parser.add_argument(
+        "--boundary", action="store_true", help="Enable seg_bnd and boundary-weighted point ROI sampling."
+    )
     return parser.parse_args()
 
 
@@ -47,7 +51,9 @@ def _unwrap(model: DDP | SegmentationModel) -> SegmentationModel:
 
 def _init_dist() -> tuple[int, int, torch.device]:
     if "RANK" not in os.environ:
-        raise RuntimeError("Launch with: python -m torch.distributed.run --nproc_per_node=2 scripts/smoke_point_head_ddp.py")
+        raise RuntimeError(
+            "Launch with: python -m torch.distributed.run --nproc_per_node=2 scripts/smoke_point_head_ddp.py"
+        )
     rank = int(os.environ["RANK"])
     local_rank = int(os.environ["LOCAL_RANK"])
     world_size = int(os.environ["WORLD_SIZE"])

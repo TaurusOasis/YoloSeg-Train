@@ -23,10 +23,10 @@ PointRend 全量 = 这套骨架 **+ 两个部件**：(T) point-head MLP 替换 `
 
 ## 1. PointRend 的两个独立部件
 
-| 部件 | 作用 | 现状 | 本文决策 |
-|---|---|---|---|
-| **(T) Point-head MLP** | 训练时在采样点上把"细特征(+粗logit)" refine 成逐点 logit | Lite 默认无 MLP（`pl` 取粗 logits）；`point_hidden>0` + `seg_point_refine=True` 时走 MLP | **本轮加并已落地**；MLP 在 `single_mask_loss` 内逐实例跑（§2.1）；DDP 用 forward `zero_loss()` 占位 + criterion 真梯度混合解法、compile-safe（§2.5） |
-| **(I) 迭代细分推理/验证** | 粗掩码→找不确定点→MLP refine→散点修正，循环 K 次 | 已有标准 `process_mask`；PointRend 为可选 PyTorch-only 后处理 | **已落地但默认关闭**（见 §3、§10）：`seg_point_refine_infer=True` + PyTorch backend 时启用；predict 还要求 `retina_masks=False`；导出和 native JSON/TXT 路径保持标准/native mask 后处理 |
+| 部件                      | 作用                                                     | 现状                                                                                     | 本文决策                                                                                                                                                                                |
+| ------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **(T) Point-head MLP**    | 训练时在采样点上把"细特征(+粗logit)" refine 成逐点 logit | Lite 默认无 MLP（`pl` 取粗 logits）；`point_hidden>0` + `seg_point_refine=True` 时走 MLP | **本轮加并已落地**；MLP 在 `single_mask_loss` 内逐实例跑（§2.1）；DDP 用 forward `zero_loss()` 占位 + criterion 真梯度混合解法、compile-safe（§2.5）                                    |
+| **(I) 迭代细分推理/验证** | 粗掩码→找不确定点→MLP refine→散点修正，循环 K 次         | 已有标准 `process_mask`；PointRend 为可选 PyTorch-only 后处理                            | **已落地但默认关闭**（见 §3、§10）：`seg_point_refine_infer=True` + PyTorch backend 时启用；predict 还要求 `retina_masks=False`；导出和 native JSON/TXT 路径保持标准/native mask 后处理 |
 
 二者可独立上线。推荐先只做 (T)，(I) 收益边际且仅 PyTorch 推理可用、对导出用户无增益。
 
@@ -41,14 +41,17 @@ PointRend 训练本质是"逐实例"在不确定点上 refine。现有 `seg_poin
 ```python
 # single_mask_loss 内 point_w>0 分支。pred_mask=粗 einsum (n,H,W)；
 # point_feats_i 已由 calculate_segmentation_loss 从 preds["feats"][0] 取该图并 expand 到 (n,Cf,Hf,Wf)
-pm4 = pred_mask.float().unsqueeze(1); gm4 = gt_mask.float().unsqueeze(1)
+pm4 = pred_mask.float().unsqueeze(1)
+gm4 = gt_mask.float().unsqueeze(1)
 with torch.no_grad():
-    coords = get_uncertain_point_coords_with_randomness(pm4.detach(), calculate_uncertainty, num_points, oversample_ratio, importance_ratio)  # (n,P,2)
+    coords = get_uncertain_point_coords_with_randomness(
+        pm4.detach(), calculate_uncertainty, num_points, oversample_ratio, importance_ratio
+    )  # (n,P,2)
     pg = point_sample(gm4, coords, align_corners=False).squeeze(1)
 coarse_p = point_sample(pm4, coords, align_corners=False).squeeze(1)  # (n,P) 粗 logit 辅助输入
 if point_head is not None and point_feats_i is not None:
     feat_p = point_sample(point_feats_i, coords, align_corners=False)  # (n,Cf,P)
-    pl = point_head(feat_p, coarse_p)                                  # (n,P) refined，带 grad
+    pl = point_head(feat_p, coarse_p)  # (n,P) refined，带 grad
 else:
     pl = coarse_p
 total = total + point_w * (point_sigmoid_focal_loss_per_instance(pl, pg) + point_dice_loss_per_instance(pl, pg)).sum()
@@ -148,6 +151,7 @@ criterion 在 `loss.py:513` 一并取出 `preds["feats"][0]`（`point_feats = pr
 **为什么 best.pt fitness 必须留在标准分叉（`seg_point_refine_infer=False`）**：`process_mask_pointrend` 的细分采点走 `get_uncertain_point_coords_in_roi`，内部有 `torch.rand` —— **随机**。每次 val 的掩码会随采点不同而抖动 → fitness 抖动 → best.pt 选择 / early-stop 被细分随机性污染、不可复现。标准 `process_mask` 是确定性的。因此 best.pt/checkpoint 选择必须站在确定性度量上；MLP 直接收益应当用**事后、固定种子、可重复**的度量验收，而不是混进训练 fitness。注意 `segment/train.py` 的 `get_validator` 用 `args=copy(self.args)` 把 cfg 透传给 validator，故 `seg_point_refine_infer` 是**单一开关**统一控制 train-val / standalone-val / predict 三条路径——训练内 val 同样会响应它；推荐训练期保持 `False`，事后单独打开。
 
 **推荐"val twice"验收协议（解验收分叉）**：
+
 1. 训练内 val：`seg_point_refine_infer=False`（ft01 现状，保持）→ best.pt/fitness 走确定性 `process_mask`，checkpoint 选择不受细分随机性影响，且与训练日志里的 mask mAP 可对齐校验。
 2. ft01 结束后，对 `best.pt`（与 `last.pt`）各 val 两次：`seg_point_refine_infer=False`（间接基线，应≈训练日志）vs `=True`（直接收益，K 次细分，MLP 真正参与），比 `metrics.seg.map50-95` / `all_ap[:,9].mean()`(AP95) / AP75。**Δ = MLP 的直接收益**，可归因（不会和"选了不同 checkpoint"混淆）。
 3. 直接那次为压住细分随机性，固定 `torch.manual_seed` 或跑 3 次取均值再比；同时报告 predict 可视化边界锐度与 latency（细分 K 次的代价）。
@@ -160,8 +164,8 @@ criterion 在 `loss.py:513` 一并取出 `preds["feats"][0]`（`point_feats = pr
 
 - **构建级**（YAML 第 4 参 `point_hidden`）：存在 → 构建 `PointHeadMLP`；不存在 → `self.point_head=None`（Lite，`pl` 取粗 logits）。`Segment26.__init__`：`self.point_head = PointHeadMLP(ch[0], point_hidden) if point_hidden > 0 else None`。
 - **运行时**（cfg `seg_point_refine: bool`）：loss 里 `point_feats = preds["feats"][0] if self.hyp_get("seg_point_refine", False) and self.point_head is not None else None`；`single_mask_loss` 内 `if point_head is not None and point_feats is not None: pl = point_head(pf, coarse) else: pl = coarse`。
-  - **四种组合**：head 未建 → 必 Lite；head 已建 + `seg_point_refine=True` → MLP；head 已建 + `seg_point_refine=False` → **Lite（`pl=coarse`）但 head 仍在 forward 跑 dummy**（参数获 0 梯度、等价冻结、DDP 安全）；`seg_point=0` → 点 loss 整体关闭（dummy 仍保 DDP 安全）。
-  - **desync 安全**：原担心"head 已建但走 Lite 会触发 P1 unused"——由 §2.5 的 forward `zero_loss()` dummy 解决（dummy 与 `seg_point_refine` 无关、只要 head 存在就跑）。故运行时 `seg_point_refine` 可安全切换 MLP/Lite 做消融，不必动 YAML/重训。
+    - **四种组合**：head 未建 → 必 Lite；head 已建 + `seg_point_refine=True` → MLP；head 已建 + `seg_point_refine=False` → **Lite（`pl=coarse`）但 head 仍在 forward 跑 dummy**（参数获 0 梯度、等价冻结、DDP 安全）；`seg_point=0` → 点 loss 整体关闭（dummy 仍保 DDP 安全）。
+    - **desync 安全**：原担心"head 已建但走 Lite 会触发 P1 unused"——由 §2.5 的 forward `zero_loss()` dummy 解决（dummy 与 `seg_point_refine` 无关、只要 head 存在就跑）。故运行时 `seg_point_refine` 可安全切换 MLP/Lite 做消融，不必动 YAML/重训。
 - 两种模式**共用 `seg_point` gain** 作点 loss 权重。
 
 **与 seg_bnd / seg_comp 的关系（P3，不叠两套 point loss）**：
@@ -185,11 +189,11 @@ criterion 在 `loss.py:513` 一并取出 `preds["feats"][0]`（`point_feats = pr
 `process_mask`（`utils/ops.py:507-531`）的清晰插入缝在 **`ops.py:522`（粗 logits matmul）与 `ops.py:528`（crop/upsample）之间**：
 
 ```python
-masks = (masks_in @ protos.float().view(c, -1)).view(-1, mh, mw)   # ops.py:522 粗 logits (N,160,160)
+masks = (masks_in @ protos.float().view(c, -1)).view(-1, mh, mw)  # ops.py:522 粗 logits (N,160,160)
 # ← 细分插这里
-masks = crop_mask(masks, bboxes * ratios)                          # ops.py:528
-masks = F.interpolate(masks[None], shape, mode="bilinear")[0]      # ops.py:530
-return masks.gt_(0.0).byte()                                       # ops.py:531
+masks = crop_mask(masks, bboxes * ratios)  # ops.py:528
+masks = F.interpolate(masks[None], shape, mode="bilinear")[0]  # ops.py:530
+return masks.gt_(0.0).byte()  # ops.py:531
 ```
 
 实际落地时发现 PyTorch `AutoBackend` 会保留完整返回：`preds[1]` 即 head dict，里面已有 `feats`；end2end 时 feats 嵌在 `preds[1]["one2one"]`。因此不需要改 `Segment26.forward` eval 返回，也不需要走 `_feats` hook；`SegmentationPredictor.postprocess` 直接抽 `(point_head, feats[0])` 并透传到 `construct_result`。导出后端仍只返回 `[det_tensor, proto]`、没有 neck feature，所以 `_extract_pointrend` 返回 None，细分自动禁用。
@@ -247,10 +251,10 @@ final = logits.gt_(0).byte()
 
 ## 6. loss_names 决策
 
-| 方案 | 改动 | resume 影响 |
-|---|---|---|
-| **方案 1（折进 seg_loss，推荐起步）** | 点 refine loss 归 `loss[1]`，`loss_names` 5 元组不动 | loss 向量长度不变 → **同架构 run 间 resume 安全**（见 §6.1）|
-| 方案 2（独立列 pt_loss） | `loss` 向量 5→6（`loss.py:506`），`seg/train.py:66` 加 `"pt_loss"`，E2ELoss 两支自动对齐 | loss_items 形状变 → **破坏 checkpoint resume** |
+| 方案                                  | 改动                                                                                     | resume 影响                                                  |
+| ------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| **方案 1（折进 seg_loss，推荐起步）** | 点 refine loss 归 `loss[1]`，`loss_names` 5 元组不动                                     | loss 向量长度不变 → **同架构 run 间 resume 安全**（见 §6.1） |
+| 方案 2（独立列 pt_loss）              | `loss` 向量 5→6（`loss.py:506`），`seg/train.py:66` 加 `"pt_loss"`，E2ELoss 两支自动对齐 | loss_items 形状变 → **破坏 checkpoint resume**               |
 
 `label_loss_items`/`progress_string`（`detect/train.py:216-245`）按 `len(loss_names)` 自适应；方案 2 注意 `:227-229` val 前缀过滤分支。**本轮用方案 1**。
 
@@ -287,21 +291,21 @@ final = logits.gt_(0).byte()
 
 ## 8. 承载改动点一览（file:line）
 
-| 关注点 | 锚点 | 改动 |
-|---|---|---|
-| YAML head args | `cfg/models/26/yolo26-seg.yaml:52`；解析 `nn/tasks.py:1924-1945`（Detect 族 append `[reg_max,end2end,ch]` 在 `:1941`） | `point_hidden` 放 `ch` 之后（形参最后、带默认）；`parse_model` 专门处理 Segment26 可选第 4 个 YAML 参数（`len(args)>=4` 才启用）；旧 YAML 无第 4 参仍兼容 |
-| head 子模块构造 | `nn/modules/head.py:335-352`(Seg), `:439-462`(Segment26) | `self.point_head = PointHeadMLP(...)`；optimizer 已过滤 frozen 参数，新 head 自动进参数组 |
-| head forward | `head.py:158`(feats=x), `:166`(one2one x_detach), `:464-482`(Segment26) | **复用 `preds["feats"][0]`（无需新增 feats 键，one2one 已自动 detach）**；MLP 真跑在 criterion，**但 forward 内新增 `point_head.zero_loss()` 占位 stash 到 `preds[...]["point_refine_dummy"]`**（§2.5 混合解法） |
-| 细特征来源 | `head.py:158`,`:370`(Seg); `block.py:1999-2008`(Proto26) | 第一版用 `feats[0]`=P3（最高分辨率 base，也是 Proto26 融合基底）；后续可对比 Proto26 内部 fused `feat`（需 Proto26 暴露 + 正确处理 one2one detach） |
-| loss: MLP 运行处（方案 B） | `utils/loss.py:509-572`(`loss()` 取 feats[0]/dummy), `:575-702`(`single_mask_loss` point 分支), `:704-782`(`calculate_segmentation_loss` 透传) | `single_mask_loss` 内逐实例跑 MLP；`point_head`+`point_feats_i`(=`preds["feats"][0]` per-image) 显式传参（§2.3）；per-image 用 `point_feats[i:i+1].expand(n,-1,-1,-1)` 广播对齐 coords（§2.4）；`loss[1] += point_refine_dummy` 后 `loss[1] *= self.hyp.box` |
-| DDP / compile | `engine/trainer.py:375-380`(wrap), `:303-309`(distill) | **已落地混合解法** + **2-GPU 核验通过**（`scripts/smoke_point_head_ddp.py`） |
-| DDP unused（P1） | `head.py` PointHeadMLP.zero_loss + forward stash；`utils/loss.py` `loss[1] += point_refine_dummy` | point_head 已建但 `seg_point=0`/无 fg/`num_points=0`/`seg_point_refine=False` 任一导致 criterion 不调 MLP 时，dummy 仍在 forward 跑 → 参数可达、DDP 安全；条件性构建保留（无第 4 参→`point_head=None`） |
-| E2ELoss | `utils/loss.py:1343-1381` | 已加 branch-aware 控制：`loss_branch` 标记 one2many/one2one；one2one point gain 乘 `seg_point_o2o`；one2one MLP 受 `seg_point_refine_o2o` 控制；`e2e_final_o2m` 接入 decay 终值，边界/refine finetune 可保留更多 one2many 梯度 |
-| loss_names / 日志 | `models/yolo/segment/train.py:66` | 方案 1 无改；方案 2 加 `"pt_loss"` + 向量 5→6 |
-| resume / finetune | `engine/trainer.py` resume 路径 | 同架构 run 间 resume 安全；从 recipe200 旧 ckpt 加 point head 须 **finetune-from-checkpoint**（pretrained+新 run+optimizer 重 init+point_head zero/随机 init），非 resume（§6.1）；migration 双向 `strict=False`（§6.1 P4） |
-| 蒸馏 | `nn/distill_model.py:296-357` | 无（学生 criterion 承载；教师无需 point head） |
-| 推理/验证 feats plumbing（已落地） | `models/yolo/segment/predict.py`；`models/yolo/segment/val.py`；`nn/autobackend.py`；`utils/ops.py`(`process_mask_pointrend`/`_scatter_refine_delta`) | **无需改 head eval**：PyTorch eval 透传 → `preds[1]` head dict 含 `feats`（end2end 嵌 `one2one`）→ `_extract_pointrend` 抓 `(point_head, feats[0])` → predict/val 后处理 → `process_mask_pointrend`；导出后端返回 `[det,proto]` 无 feats → 细分自动禁用；predict `retina_masks=True` 与 val `save_json/save_txt` native path 回退标准/native path（§3） |
-| cfg 键 | `cfg/default.yaml` + `cfg/__init__.py` | 已加 `seg_point`(FLOAT,共用 gain)/`seg_point_importance`(FRACTION)/`seg_point_num`+`seg_point_oversample`(INT)/`seg_point_refine`+`seg_point_boundary`(BOOL)/`dali`(BOOL)；**模式开关 = 构建级 YAML 第 4 参 `point_hidden`（决定 head 存在与否）+ 运行时 `seg_point_refine`（决定 head 是否参与点 loss）**（§2.9）；E2E 控制 `seg_point_o2o`(FLOAT)/`seg_point_refine_o2o`(BOOL)/`e2e_final_o2m`(FLOAT)；推理侧 `seg_point_refine_infer`(BOOL,默认关)+`seg_point_subdiv_k`(INT,默认 3) 已加（§3） |
+| 关注点                             | 锚点                                                                                                                                                  | 改动                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| YAML head args                     | `cfg/models/26/yolo26-seg.yaml:52`；解析 `nn/tasks.py:1924-1945`（Detect 族 append `[reg_max,end2end,ch]` 在 `:1941`）                                | `point_hidden` 放 `ch` 之后（形参最后、带默认）；`parse_model` 专门处理 Segment26 可选第 4 个 YAML 参数（`len(args)>=4` 才启用）；旧 YAML 无第 4 参仍兼容                                                                                                                                                                                                                                                                                                                                         |
+| head 子模块构造                    | `nn/modules/head.py:335-352`(Seg), `:439-462`(Segment26)                                                                                              | `self.point_head = PointHeadMLP(...)`；optimizer 已过滤 frozen 参数，新 head 自动进参数组                                                                                                                                                                                                                                                                                                                                                                                                         |
+| head forward                       | `head.py:158`(feats=x), `:166`(one2one x_detach), `:464-482`(Segment26)                                                                               | **复用 `preds["feats"][0]`（无需新增 feats 键，one2one 已自动 detach）**；MLP 真跑在 criterion，**但 forward 内新增 `point_head.zero_loss()` 占位 stash 到 `preds[...]["point_refine_dummy"]`**（§2.5 混合解法）                                                                                                                                                                                                                                                                                  |
+| 细特征来源                         | `head.py:158`,`:370`(Seg); `block.py:1999-2008`(Proto26)                                                                                              | 第一版用 `feats[0]`=P3（最高分辨率 base，也是 Proto26 融合基底）；后续可对比 Proto26 内部 fused `feat`（需 Proto26 暴露 + 正确处理 one2one detach）                                                                                                                                                                                                                                                                                                                                               |
+| loss: MLP 运行处（方案 B）         | `utils/loss.py:509-572`(`loss()` 取 feats[0]/dummy), `:575-702`(`single_mask_loss` point 分支), `:704-782`(`calculate_segmentation_loss` 透传)        | `single_mask_loss` 内逐实例跑 MLP；`point_head`+`point_feats_i`(=`preds["feats"][0]` per-image) 显式传参（§2.3）；per-image 用 `point_feats[i:i+1].expand(n,-1,-1,-1)` 广播对齐 coords（§2.4）；`loss[1] += point_refine_dummy` 后 `loss[1] *= self.hyp.box`                                                                                                                                                                                                                                      |
+| DDP / compile                      | `engine/trainer.py:375-380`(wrap), `:303-309`(distill)                                                                                                | **已落地混合解法** + **2-GPU 核验通过**（`scripts/smoke_point_head_ddp.py`）                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| DDP unused（P1）                   | `head.py` PointHeadMLP.zero_loss + forward stash；`utils/loss.py` `loss[1] += point_refine_dummy`                                                     | point_head 已建但 `seg_point=0`/无 fg/`num_points=0`/`seg_point_refine=False` 任一导致 criterion 不调 MLP 时，dummy 仍在 forward 跑 → 参数可达、DDP 安全；条件性构建保留（无第 4 参→`point_head=None`）                                                                                                                                                                                                                                                                                           |
+| E2ELoss                            | `utils/loss.py:1343-1381`                                                                                                                             | 已加 branch-aware 控制：`loss_branch` 标记 one2many/one2one；one2one point gain 乘 `seg_point_o2o`；one2one MLP 受 `seg_point_refine_o2o` 控制；`e2e_final_o2m` 接入 decay 终值，边界/refine finetune 可保留更多 one2many 梯度                                                                                                                                                                                                                                                                    |
+| loss_names / 日志                  | `models/yolo/segment/train.py:66`                                                                                                                     | 方案 1 无改；方案 2 加 `"pt_loss"` + 向量 5→6                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| resume / finetune                  | `engine/trainer.py` resume 路径                                                                                                                       | 同架构 run 间 resume 安全；从 recipe200 旧 ckpt 加 point head 须 **finetune-from-checkpoint**（pretrained+新 run+optimizer 重 init+point_head zero/随机 init），非 resume（§6.1）；migration 双向 `strict=False`（§6.1 P4）                                                                                                                                                                                                                                                                       |
+| 蒸馏                               | `nn/distill_model.py:296-357`                                                                                                                         | 无（学生 criterion 承载；教师无需 point head）                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 推理/验证 feats plumbing（已落地） | `models/yolo/segment/predict.py`；`models/yolo/segment/val.py`；`nn/autobackend.py`；`utils/ops.py`(`process_mask_pointrend`/`_scatter_refine_delta`) | **无需改 head eval**：PyTorch eval 透传 → `preds[1]` head dict 含 `feats`（end2end 嵌 `one2one`）→ `_extract_pointrend` 抓 `(point_head, feats[0])` → predict/val 后处理 → `process_mask_pointrend`；导出后端返回 `[det,proto]` 无 feats → 细分自动禁用；predict `retina_masks=True` 与 val `save_json/save_txt` native path 回退标准/native path（§3）                                                                                                                                           |
+| cfg 键                             | `cfg/default.yaml` + `cfg/__init__.py`                                                                                                                | 已加 `seg_point`(FLOAT,共用 gain)/`seg_point_importance`(FRACTION)/`seg_point_num`+`seg_point_oversample`(INT)/`seg_point_refine`+`seg_point_boundary`(BOOL)/`dali`(BOOL)；**模式开关 = 构建级 YAML 第 4 参 `point_hidden`（决定 head 存在与否）+ 运行时 `seg_point_refine`（决定 head 是否参与点 loss）**（§2.9）；E2E 控制 `seg_point_o2o`(FLOAT)/`seg_point_refine_o2o`(BOOL)/`e2e_final_o2m`(FLOAT)；推理侧 `seg_point_refine_infer`(BOOL,默认关)+`seg_point_subdiv_k`(INT,默认 3) 已加（§3） |
 
 **承载不变量**：loss 所需一切必须能从 head 训练态 forward 返回的 `preds` dict 取到——那是 criterion 除 `batch` 外的唯一入参（`nn/tasks.py:347` `return self.criterion(preds, batch)`）。**带参数子模块（point_head）走混合解法**（§2.5），2-GPU allreduce 已核验（`scripts/smoke_point_head_ddp.py`）。
 
@@ -324,15 +328,18 @@ final = logits.gt_(0).byte()
 ### 10.1 已落地（训练侧 T + 推理侧 I）
 
 **head（`nn/modules/head.py`）**
+
 - `PointHeadMLP`：`Conv1d(Cf+1→hidden→hidden→1)` 逐点 MLP，末层 `zero_init` → 初始 `refined == coarse`（恒等残差）；`forward(point_feats (N,Cf,P), coarse (N,P)|(N,1,P))` 强制 fp32；`zero_loss()` 返回连接所有参数的标量 0（DDP 占位）。已 export 进 `nn/modules/__init__.__all__`。
 - `Segment26.__init__(..., point_hidden=0)`：`self.point_head = PointHeadMLP(ch[0], point_hidden) if point_hidden > 0 else None`（条件性构建）。
 - `Segment26.forward`：训练态 `if self.training and self.point_head is not None` 时算 `dummy = self.point_head.zero_loss()`，end2end 下 stash 到 `preds["one2many"]["point_refine_dummy"]` 与 `preds["one2one"]["point_refine_dummy"]`（同一 dummy 对象），非 end2end stash 到 `preds["point_refine_dummy"]`。
 
 **parse_model / YAML（`nn/tasks.py` + `cfg/models/26/yolo26-seg-pointrend.yaml`）**
+
 - `parse_model` Segment26 分支：`len(args)>3` 时取 `point_hidden=args[3]` 并 `args=args[:3]`（剥掉，避免被 `args.extend([reg_max,end2end,ch])` 错位）→ extend → npr 缩放 → `args.append(make_divisible(min(point_hidden,max_channels)*width,8))`（缩放后置末位）。旧 YAML `[nc,32,256]`（无第 4 参）→ `point_hidden=None` → Lite、无新参数，新旧共存。
 - 新 YAML `yolo26-seg-pointrend.yaml`：末行 `[[16,19,22], 1, Segment26, [nc, 32, 256, 128]]`；scale 别名 n/s/m/l/x 与 `yolo26-seg.yaml` 一致；`end2end: True`、`reg_max: 1`。
 
 **loss（`utils/loss.py` + `utils/mask_point_sampling.py` + `mask_boundary_loss.py` + `mask_completeness_loss.py`）**
+
 - `v8SegmentationLoss.__init__`：`self.point_head = getattr(model.model[-1], "point_head", None)`。
 - `loss()`：`point_refine_dummy = preds.get("point_refine_dummy")`；`point_w = self._point_loss_gain()` 按 branch 预计算；仅当 `point_w>0`、`_point_refine_enabled()`、且模型有 `point_head` 时取 `point_feats = preds["feats"][0]`；透传给 `calculate_segmentation_loss(point_w=..., point_feats=...)`；末尾 `if point_refine_dummy is not None: loss[1] += point_refine_dummy` 后 `loss[1] *= self.hyp.box`。
 - `calculate_segmentation_loss`：per-image `point_feats_i = point_feats[i:i+1].expand(mask_idx.shape[0], -1, -1, -1)`（expand 广播、不复制显存），连同 `point_head=getattr(self, "point_head", None)`、`roi_margin`、`boundary_w` 与各 gain 透传给 `single_mask_loss`。**用 `getattr` 而非 `self.point_head`**：该方法可被单元测试用 `object.__new__(v8SegmentationLoss)` 跳过 `__init__` 单独调用（不设 `point_head` 属性），裸 `self.point_head` 会 `AttributeError`；`getattr(..., None)` 退化为 Lite（`pl=coarse`）且与 `__init__` 的 `getattr(model.model[-1], "point_head", None)` 风格一致。正常训练路径 `__init__` 已设 `self.point_head`，行为不变。
@@ -341,16 +348,20 @@ final = logits.gt_(0).byte()
 - `E2ELoss`：`one2many.loss_branch="one2many"`、`one2one.loss_branch="one2one"`；one2one `seg_point` 乘 `seg_point_o2o`，one2one MLP 受 `seg_point_refine_o2o` 门控；`e2e_final_o2m` 替代硬编码 final o2m=0.1（默认仍 0.1）。
 
 **cfg（`cfg/default.yaml` + `cfg/__init__.py`）**
+
 - 新增 FLOAT：`seg_comp`/`seg_bnd`/`seg_point`/`seg_point_roi`/`seg_point_o2o`/`e2e_final_o2m`；FRACTION：`seg_point_importance`；INT：`seg_point_num`/`seg_point_oversample`/`seg_point_subdiv_k`；BOOL：`seg_point_refine`/`seg_point_boundary`/`seg_point_refine_o2o`/`seg_point_refine_infer`/`dali`。均带内联 `# (type) 描述` 注释，经 `get_cfg` 自动透传。`seg_point_roi` 默认 `0.0`（ROI bbox-restricted）；`<0` 且 `seg_point_boundary=False` 时训练退回 legacy full-grid（消融对照），推理侧会 clamp 到 0 以保持 bbox ROI。
 
 **ops / 采样器（`utils/ops.py` + `utils/mask_point_sampling.py`）**
+
 - `sobel_magnitude`：3×3 Sobel |grad|，`torch.autocast(device_type=..., enabled=False)` 强制 fp32（F21），供 `mask_boundary_loss.boundary_l2_loss_per_instance` 复用。
 - `get_uncertain_point_coords_in_roi` + `_rand_in_roi` + `_weighted_rand_in_roi`（§2.6 已落地）：逐实例 bbox+margin 限制的不确定性采样器；退化 bbox 回退 full-grid；可选 `weight_map`（GT Sobel 边界 band）时走**混合候选池**——oversample 50% 边界加权 + 50% bbox 均匀合并后做 pred-uncertainty top-k，25% 随机余量始终 bbox 均匀（消解边界加权 × top-k 的内部 FP/FN 监督冲突，§2.6）。`single_mask_loss` point 分支按 `roi_margin>=0 or boundary_w` 调度它，否则走 legacy `get_uncertain_point_coords_with_randomness`。
 
 **DALI（`data/dali_seg.py` + `models/yolo/detect/train.py`）**
+
 - `dali=True` + segment 时走 `YOLOSegDALILoader`（GPU JPEG decode/resize，CPU label/mask 格式化）；`preprocess_batch` 弹出 `batch["dali"]` 标记、归一化保持一致。**与本设计正交**——是独立的训练加速实验，非 point head 依赖。
 
 **测试（`yolo26-cu133` conda env targeted 通过）**
+
 - 已跑定向 pytest（边界/completeness/point/refine/E2E cfg/predict/val/load/resume/forward/backward smoke）：此前 `24 passed in 1.65s`；本轮补 val 分叉后追加 `15 passed in 1.81s`。覆盖 `test_segmentation_loss_e2e_point_branch_controls`、`test_segment26_forward_point_refine_dummy_and_detach_contract`、`test_e2e_point_refine_backward_branch_gradient_routes`、`test_process_mask_pointrend_basic`、`test_pointrend_infer_subdivision_smoke`、`test_segmentation_validator_pointrend_postprocess`、`test_segmentation_loss_cfg_overrides_are_accepted`、`test_model_load_unwraps_distillation_student_checkpoint`、`test_resume_point_refine_overrides_are_whitelisted` 等关键路径。
 - 已跑 2-GPU DDP smoke：`scripts/smoke_point_head_ddp.py`（`torchrun --nproc_per_node=2`，`find_unused_parameters=False`；MLP 路径 point_head grads synced across 2 ranks；`seg_point_refine=False` dummy 路径 zero point_head grads OK）。
 - `test_engine.py` 新增覆盖包括：`test_mask_point_coords_full_grid`、`test_mask_point_coords_in_roi`（§2.6 ROI 采样器：点落在 bbox+margin 内、退化 bbox 回退 full-grid）、`test_point_focal_dice_per_instance`、`test_point_head_mlp_zero_init_is_coarse_residual`（断言 init 时 `refined==coarse`）、`test_sobel_magnitude_constant_is_near_zero`、`test_single_mask_loss_all_gains_disabled_matches_legacy`（`seg_point=0`==legacy BCE；point_lite==point_refine@init；`num_points=0`==legacy）、`test_segmentation_loss_optional_hyp_injection_is_finite`（用 `object.__new__` 跳过 `__init__` 隔离测 `calculate_segmentation_loss`，依赖上面的 `getattr` 防御）、`test_segmentation_loss_cfg_overrides_are_accepted`（含 `seg_point_roi`/`seg_point_boundary` 类型校验）、`test_yolo26_pointrend_yaml_builds_optional_point_head`（断言新 YAML 建 `point_head`、旧 YAML `point_head is None`）。§2.6 进阶新增 `test_mask_point_coords_weighted_in_roi`（断言混合候选池下边界 band 仍被过采样（vs 均匀 ~0.1）但内部点保持可达、退化 bbox 回退 full-grid）与 `test_segmentation_loss_boundary_roi_path_is_finite`（`seg_point_boundary=True` 且 `seg_point_roi<0` 时强制走 ROI、端到端有限且可反传）。
@@ -358,6 +369,7 @@ final = logits.gt_(0).byte()
 - 注：`test_train_reuses_loaded_checkpoint_model[kwargs*]` 失败与本设计**无关**——它实跑一次训练并要求落盘 `best.pt`/`last.pt`，因 `weights/path with spaces/...` 无 checkpoint 产出而 `FileNotFoundError`，属测试基础设施/环境问题，不触碰 seg point loss 路径。
 
 **推理/验证侧 (I)（`utils/ops.py` + `models/yolo/segment/predict.py` + `models/yolo/segment/val.py` + `cfg/`）**
+
 - `process_mask_pointrend`（`utils/ops.py`）：粗 logits `(masks_in @ protos).view(n,mh,mw)` → 按标准 `process_mask` 先在 proto grid crop → 直接上采样到 target shape → K 次 full-res ROI uncertain-point refine → `point_head(feat, coarse_at)` → `_scatter_refine_delta(logits, coords, refined - coarse_at)` → `.gt_(0).byte()`；空输入回 `(0,h,w)`。zero-init head 下与标准 `process_mask(..., upsample=True)` bitwise 等价。
 - `_scatter_refine_delta`：按 `coords` 的最近像素把 refined-minus-coarse delta 加回 full-res logits（与 `point_sample(align_corners=False)` 坐标约定一致：`rows=(coords[...,1]*h-0.5).round().long().clamp(0,h-1)`），非采样点保持原双线性值。
 - `SegmentationPredictor`：`_point_head()`（仅 `format=="pt"`，`getattr(self.model.model.model[-1], "point_head", None)`，try/except 容错）、`_extract_pointrend(preds)`（`seg_point_refine_infer` 开 + `preds[1]` 是 dict + point_head 存在 → 返回 `(point_head, feats[0])`；end2end 嵌 `preds[1]["one2one"]`；否则 None）、`postprocess` 抽 pointrend 透传、`construct_results` 按图切 `(point_head, batch_feats[i:i+1])`、`construct_result` 仅在 `pointrend is not None and not retina_masks` 时调 `process_mask_pointrend`；`retina_masks=True` 保持 native path。
@@ -736,17 +748,17 @@ seg_point_refine_infer=True
 
 ### 15.4 当前代码变更状态
 
-| 模块 | 当前进展 | 备注 |
-|---|---|---|
-| YAML / parse_model | 已支持 `Segment26(..., point_hidden)` | 旧 YAML 不传第 4 参仍无 point head |
-| `PointHeadMLP` | 已实现 Conv1d + residual zero-init | init 时 `refined == coarse`，冷启动 no-op |
-| training loss | 已接入 ROI/boundary point loss + MLP refine | loss 向量长度不变，resume 同架构安全 |
-| DDP dummy | 已接入 forward `zero_loss()` | criterion 跑真 MLP，dummy 只保参数可达 |
-| E2E controls | 已接入 `seg_point_o2o` / `seg_point_refine_o2o` / `e2e_final_o2m` | 处理 one2one detach 下监督变弱问题 |
-| ckpt migration | 已修 `DistillationModel.student_model` unwrap | recipe200 best.pt 可迁移到新 YAML |
-| predict | 已接入 `process_mask_pointrend` | 默认关；PyTorch-only；retina/export 回退 |
-| val | 已接入 PointRend 验收分叉 | 默认关；开关开时 full-res pred/GT 对齐 |
-| compile | 已加无 Triton fallback | 当前环境只覆盖安全回退，未覆盖真实 Inductor |
+| 模块               | 当前进展                                                          | 备注                                        |
+| ------------------ | ----------------------------------------------------------------- | ------------------------------------------- |
+| YAML / parse_model | 已支持 `Segment26(..., point_hidden)`                             | 旧 YAML 不传第 4 参仍无 point head          |
+| `PointHeadMLP`     | 已实现 Conv1d + residual zero-init                                | init 时 `refined == coarse`，冷启动 no-op   |
+| training loss      | 已接入 ROI/boundary point loss + MLP refine                       | loss 向量长度不变，resume 同架构安全        |
+| DDP dummy          | 已接入 forward `zero_loss()`                                      | criterion 跑真 MLP，dummy 只保参数可达      |
+| E2E controls       | 已接入 `seg_point_o2o` / `seg_point_refine_o2o` / `e2e_final_o2m` | 处理 one2one detach 下监督变弱问题          |
+| ckpt migration     | 已修 `DistillationModel.student_model` unwrap                     | recipe200 best.pt 可迁移到新 YAML           |
+| predict            | 已接入 `process_mask_pointrend`                                   | 默认关；PyTorch-only；retina/export 回退    |
+| val                | 已接入 PointRend 验收分叉                                         | 默认关；开关开时 full-res pred/GT 对齐      |
+| compile            | 已加无 Triton fallback                                            | 当前环境只覆盖安全回退，未覆盖真实 Inductor |
 
 ### 15.5 当前训练进展
 
@@ -784,18 +796,18 @@ conda run -n yolo26-cu133 python scripts/finetune_yolo26s_seg_pointrend_coconut_
 
 脚本默认值与“保守起跑建议”有差异，需要运行前明确选择：
 
-| 项 | 脚本当前默认 | 更保守建议 | 说明 |
-|---|---:|---:|---|
-| `epochs` | 60 | 40-60 | ft 验证优先，不必一开始拉太长 |
-| `batch` | 84 | 72 或 84 | recipe200 曾在 batch 90/multi_scale 0.25 OOM；84 默认不蒸馏，若开蒸馏建议降到 72 |
-| `multi_scale` | 0.15 | 0.15 | 已比 recipe200 0.25 保守 |
-| `seg_point` | 0.5 | 0.2 起步 | 0.5 更激进；先看 AP75/AP95 是否稳涨 |
-| `seg_point_num` | 64 | 64 | 合理，控制显存 |
-| `seg_point_boundary` | True | True | 默认边界加权采样开启；如需纯 ROI 消融用 `--no-boundary` |
-| `seg_point_o2o` | 0.0 | 0.0 | 脚本硬编码 one2many-only point supervision，符合 detach 风险控制 |
-| `seg_point_refine_o2o` | False | False | 脚本硬编码，one2one 退回 Lite |
-| `e2e_final_o2m` | 0.1 | 0.3 | 若重点做边界/refine，建议显式 `--e2e-final-o2m 0.3` 保留 one2many 梯度 |
-| `distill` | False | False 起步 | 不蒸馏省 teacher VRAM；若要开蒸馏需显式 `--distill` 并降 batch |
+| 项                     | 脚本当前默认 | 更保守建议 | 说明                                                                             |
+| ---------------------- | -----------: | ---------: | -------------------------------------------------------------------------------- |
+| `epochs`               |           60 |      40-60 | ft 验证优先，不必一开始拉太长                                                    |
+| `batch`                |           84 |   72 或 84 | recipe200 曾在 batch 90/multi_scale 0.25 OOM；84 默认不蒸馏，若开蒸馏建议降到 72 |
+| `multi_scale`          |         0.15 |       0.15 | 已比 recipe200 0.25 保守                                                         |
+| `seg_point`            |          0.5 |   0.2 起步 | 0.5 更激进；先看 AP75/AP95 是否稳涨                                              |
+| `seg_point_num`        |           64 |         64 | 合理，控制显存                                                                   |
+| `seg_point_boundary`   |         True |       True | 默认边界加权采样开启；如需纯 ROI 消融用 `--no-boundary`                          |
+| `seg_point_o2o`        |          0.0 |        0.0 | 脚本硬编码 one2many-only point supervision，符合 detach 风险控制                 |
+| `seg_point_refine_o2o` |        False |      False | 脚本硬编码，one2one 退回 Lite                                                    |
+| `e2e_final_o2m`        |          0.1 |        0.3 | 若重点做边界/refine，建议显式 `--e2e-final-o2m 0.3` 保留 one2many 梯度           |
+| `distill`              |        False | False 起步 | 不蒸馏省 teacher VRAM；若要开蒸馏需显式 `--distill` 并降 batch                   |
 
 建议下一阶段第一条命令用保守覆盖，避免把“point loss 太强 / 后期 one2many 梯度太弱 / 显存”三件事混在一起：
 

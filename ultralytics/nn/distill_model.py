@@ -400,14 +400,18 @@ class DistillationModel(nn.Module):
         std = proto.std(dim=(-2, -1), keepdim=True).clamp_min(1e-6)
         return (proto - mean) / std
 
-    def loss_proto(self, student_head_feat, teacher_head_feat, teacher_scores: tuple[torch.Tensor, ...]) -> torch.Tensor:
+    def loss_proto(
+        self, student_head_feat, teacher_head_feat, teacher_scores: tuple[torch.Tensor, ...]
+    ) -> torch.Tensor:
         """Compute foreground-weighted prototype distillation loss for segmentation models."""
         teacher_proto = self.extract_proto(teacher_head_feat, branch="one2many")
         student_proto = self.extract_proto(student_head_feat, branch="one2many")
         if teacher_proto is None or student_proto is None:
             return torch.zeros(1, device=next(self.student_model.parameters()).device)
         if student_proto.shape[-2:] != teacher_proto.shape[-2:]:
-            student_proto = F.interpolate(student_proto, size=teacher_proto.shape[-2:], mode="bilinear", align_corners=False)
+            student_proto = F.interpolate(
+                student_proto, size=teacher_proto.shape[-2:], mode="bilinear", align_corners=False
+            )
         if student_proto.shape[1] != teacher_proto.shape[1]:
             if not getattr(self, "_proto_channel_mismatch_warned", False):
                 LOGGER.warning(

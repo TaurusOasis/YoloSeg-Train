@@ -92,8 +92,8 @@ def _rand_in_roi(
         device (torch.device): Device for new tensors.
 
     Returns:
-        (torch.Tensor): (N, num, 2) random coords in [0, 1]. Degenerate boxes (x2<=x1 or y2<=y1
-            after clamping) fall back to full-grid [0, 1]^2 sampling for those rows.
+        (torch.Tensor): (N, num, 2) random coords in [0, 1]. Degenerate boxes (x2<=x1 or y2<=y1 after clamping) fall
+            back to full-grid [0, 1]^2 sampling for those rows.
     """
     x1 = (boxes_norm[:, 0] - margin).clamp(0.0, 1.0)
     y1 = (boxes_norm[:, 1] - margin).clamp(0.0, 1.0)
@@ -121,16 +121,16 @@ def _weighted_rand_in_roi(
 ) -> torch.Tensor:
     """Draw ``num`` points per instance inside its bbox, biased by a per-instance weight map.
 
-    A boundary-band-weighted companion to :func:`_rand_in_roi`: instead of a uniform draw inside
-    the (margin-expanded, clamped) bbox, candidate pixels are drawn with probability proportional
-    to ``weight_map`` restricted to the bbox — so points concentrate on the true GT boundary band
-    when ``weight_map`` is a Sobel magnitude map. Sampling is via ``torch.multinomial`` (with
+    A boundary-band-weighted companion to :func:`_rand_in_roi`: instead of a uniform draw inside the (margin-expanded,
+    clamped) bbox, candidate pixels are drawn with probability proportional to ``weight_map`` restricted to the bbox —
+    so points concentrate on the true GT boundary band when ``weight_map`` is a Sobel magnitude map. Sampling is via
+    ``torch.multinomial`` (with
     replacement) and is non-differentiable by design; callers wrap it in ``torch.no_grad``.
 
     Fallbacks (so a missing boundary signal never starves the point loss):
-      - degenerate bbox (x2<=x1 or y2<=y1 after clamping) -> uniform full-grid [0, 1]^2 for that row
+    - degenerate bbox (x2<=x1 or y2<=y1 after clamping) -> uniform full-grid [0, 1]^2 for that row
         (matches :func:`_rand_in_roi`).
-      - valid bbox but zero total weight inside (e.g. a constant GT region with no Sobel response)
+    - valid bbox but zero total weight inside (e.g. a constant GT region with no Sobel response)
         -> uniform within the bbox for that row.
 
     Args:
@@ -144,8 +144,8 @@ def _weighted_rand_in_roi(
         device (torch.device): Device for new tensors.
 
     Returns:
-        (torch.Tensor): (N, num, 2) coords in [0, 1]. Pixel indices are mapped to pixel-center
-            coords ``(idx + 0.5) / size`` to match ``point_sample(..., align_corners=False)``.
+        (torch.Tensor): (N, num, 2) coords in [0, 1]. Pixel indices are mapped to pixel-center coords ``(idx + 0.5) /
+            size`` to match ``point_sample(..., align_corners=False)``.
     """
     if num <= 0:
         return weight_map.new_zeros(num_boxes, 0, 2)
@@ -157,9 +157,7 @@ def _weighted_rand_in_roi(
     px2 = (x2 * W).long().clamp(0, W)
     py1 = (y1 * H).long().clamp(0, H)
     py2 = (y2 * H).long().clamp(0, H)
-    ys, xs = torch.meshgrid(
-        torch.arange(H, device=device), torch.arange(W, device=device), indexing="ij"
-    )
+    ys, xs = torch.meshgrid(torch.arange(H, device=device), torch.arange(W, device=device), indexing="ij")
     in_x = (xs[None] >= px1[:, None, None]) & (xs[None] < px2[:, None, None])
     in_y = (ys[None] >= py1[:, None, None]) & (ys[None] < py2[:, None, None])
     bbox_mask = (in_x & in_y).to(weight_map.dtype)  # (N, H, W)
@@ -195,21 +193,20 @@ def get_uncertain_point_coords_in_roi(
 ) -> torch.Tensor:
     """Sample uncertain points restricted to each instance's bbox (PointRend ROI variant).
 
-    Unlike ``get_uncertain_point_coords_with_randomness`` (full-grid [0, 1]^2), both the
-    oversample draw and the random remainder are confined to the per-instance bbox (expanded by
-    ``margin`` and clamped to [0, 1]), so uncertain points land on the object/boundary instead of
-    on background — fixing the small-object background-sampling weakness of the lite seg_point.
+    Unlike ``get_uncertain_point_coords_with_randomness`` (full-grid [0, 1]^2), both the oversample draw and the random
+    remainder are confined to the per-instance bbox (expanded by ``margin`` and clamped to [0, 1]), so uncertain points
+    land on the object/boundary instead of on background — fixing the small-object background-sampling weakness of the
+    lite seg_point.
 
-    When ``weight_map`` (N, H, W) is provided, the oversample candidate pool is a 50/50 blend of a
-    boundary-weighted draw (see :func:`_weighted_rand_in_roi`; pass a GT Sobel magnitude map) and a
-    uniform-in-bbox draw (see :func:`_rand_in_roi`). The pred-uncertainty top-k then operates over
-    this *combined* pool, so interior wrong-but-uncertain points (false-positive regions away from
-    the GT boundary, where the Sobel weight ≈ 0) stay reachable by the importance selection — they
-    are not crowded out by the boundary-weighted half. The boundary is still over-represented
-    (~5× its pixel share) for boundary-focused point supervision, while interior FP/FN regions keep
-    a path into the top-k. The 25% random remainder is *always* uniform-in-bbox (never boundary
-    weighted), matching the legacy remainder and guaranteeing interior coverage. When ``weight_map``
-    is ``None``, the draw is uniform inside the bbox and the behavior is pure ROI-uniform.
+    When ``weight_map`` (N, H, W) is provided, the oversample candidate pool is a 50/50 blend of a boundary-weighted
+    draw (see :func:`_weighted_rand_in_roi`; pass a GT Sobel magnitude map) and a uniform-in-bbox draw (see
+    :func:`_rand_in_roi`). The pred-uncertainty top-k then operates over this *combined* pool, so interior
+    wrong-but-uncertain points (false-positive regions away from the GT boundary, where the Sobel weight ≈ 0) stay
+    reachable by the importance selection — they are not crowded out by the boundary-weighted half. The boundary is
+    still over-represented (~5× its pixel share) for boundary-focused point supervision, while interior FP/FN regions
+    keep a path into the top-k. The 25% random remainder is *always* uniform-in-bbox (never boundary weighted), matching
+    the legacy remainder and guaranteeing interior coverage. When ``weight_map`` is ``None``, the draw is uniform inside
+    the bbox and the behavior is pure ROI-uniform.
     """
     assert oversample_ratio >= 1
     assert 0.0 <= importance_sample_ratio <= 1.0
@@ -222,9 +219,7 @@ def get_uncertain_point_coords_in_roi(
         H, W = logits.shape[-2], logits.shape[-1]
         num_bnd = num_sampled // 2
         num_uni = num_sampled - num_bnd
-        bnd = _weighted_rand_in_roi(
-            num_boxes, num_bnd, boxes_norm, margin, weight_map, H, W, logits.device
-        )
+        bnd = _weighted_rand_in_roi(num_boxes, num_bnd, boxes_norm, margin, weight_map, H, W, logits.device)
         uni = _rand_in_roi(num_boxes, num_uni, boxes_norm, margin, logits.device)
         point_coords = torch.cat([bnd, uni], dim=1)  # (N, num_sampled, 2)
     else:
@@ -257,8 +252,8 @@ def point_sigmoid_focal_loss_per_instance(
 ) -> torch.Tensor:
     """Per-instance sigmoid focal loss over sampled points (torch-only, no triton).
 
-    Mirrors ``sam3/train/loss/loss_fns.sigmoid_focal_loss`` (non-triton branch) but returns a
-    per-instance mean over the point dimension instead of a global reduction.
+    Mirrors ``sam3/train/loss/loss_fns.sigmoid_focal_loss`` (non-triton branch) but returns a per-instance mean over the
+    point dimension instead of a global reduction.
 
     Args:
         point_logits (torch.Tensor): (N, P) predicted mask logits at sampled points (with grad).
@@ -285,8 +280,8 @@ def point_dice_loss_per_instance(
 ) -> torch.Tensor:
     """Per-instance dice loss over sampled points.
 
-    Mirrors ``sam3/train/loss/loss_fns._dice_loss`` (``1 - (2*inter+1)/(denom+1)``) but returns a
-    per-instance value instead of a global reduction.
+    Mirrors ``sam3/train/loss/loss_fns._dice_loss`` (``1 - (2*inter+1)/(denom+1)``) but returns a per-instance value
+    instead of a global reduction.
 
     Args:
         point_logits (torch.Tensor): (N, P) predicted mask logits at sampled points (with grad).
