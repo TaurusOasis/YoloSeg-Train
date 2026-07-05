@@ -143,9 +143,10 @@ jobs:
         torch: [latest]
         include:
           - os: ubuntu-latest
-            python: "3.8" # torch 1.8.0 requires python >=3.6, <=3.9
-            torch: "1.8.0"
-            torchvision: "0.9.0"
+            python: "3.8"
+            torch: "1.13.0"
+            torchvision: "0.14.0"
+            numpy_extra: export-legacy-torch
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -160,11 +161,15 @@ jobs:
         shell: bash # for Windows compatibility
         run: |
           slow=""
+          legacy_extra=""
+          if [ -n "${{ matrix.numpy_extra }}" ]; then
+            legacy_extra=",${{ matrix.numpy_extra }}"
+          fi
           torch=""
           if [ "${{ matrix.torch }}" != "latest" ]; then
               torch="torch==${{ matrix.torch }} torchvision==${{ matrix.torchvision }}"
           fi
-          uv pip install -e ".[export-base,solutions]" \
+          uv pip install -e ".[export-base,solutions${legacy_extra}]" \
             $torch aiohttp pytest-cov pytest-xdist "git+https://github.com/ultralytics/CLIP.git" \
             --torch-backend cpu
       - name: Check environment
@@ -217,31 +222,7 @@ jobs:
         python: ["3.13"]
         torch: [latest]
         include:
-          # Legacy PyTorch shards keep NumPy <2 only where the older torch builds actually need it.
-          - os: ubuntu-latest
-            python: "3.8" # torch 1.8.0 requires python >=3.6, <=3.9
-            torch: "1.8.0"
-            torchvision: "0.9.0"
-          - os: ubuntu-latest
-            python: "3.9"
-            torch: "1.9.0"
-            torchvision: "0.10.0"
-            numpy_extra: export-legacy-torch
-          - os: ubuntu-latest
-            python: "3.9"
-            torch: "1.10.0"
-            torchvision: "0.11.0"
-            numpy_extra: export-legacy-torch
-          - os: ubuntu-latest
-            python: "3.10"
-            torch: "1.11.0"
-            torchvision: "0.12.0"
-            numpy_extra: export-legacy-torch
-          - os: ubuntu-latest
-            python: "3.10"
-            torch: "1.12.0"
-            torchvision: "0.13.0"
-            numpy_extra: export-legacy-torch
+          # Minimum supported PyTorch starts at 1.13.0. Older supported shards keep NumPy <3 where needed.
           - os: ubuntu-latest
             python: "3.10"
             torch: "1.13.0"
