@@ -1,8 +1,8 @@
 # YOLO26s-seg PointRend Loss 新手入门教程
 
-> **文档日期**：2026-07-05（§14–§25 代码层级增补）  
+> **文档日期**：2026-07-07（§14–§29 代码层级增补）  
 > **读者**：第一次接触本仓库 mask 子损失 / PointRend 的开发者  
-> **配套**：[设计文档（工程师向）](yolo26s-seg-pointrend-refine-head-design.md) · [recipe200 阶段总结](yolo26s-seg-recipe200-stage-summary.md) · [蒸馏主文档](yolo26s-seg-distill-training-flow.md)
+> **配套**：[实验结果总结](yolo26s-seg-pointrend-experiment-results.md) · [设计文档（工程师向）](yolo26s-seg-pointrend-refine-head-design.md) · [recipe200 阶段总结](yolo26s-seg-recipe200-stage-summary.md) · [蒸馏主文档](yolo26s-seg-distill-training-flow.md)
 
 ---
 
@@ -989,4 +989,31 @@ YOLO("yolo26s-seg-pointrend.yaml").train(
 
 ---
 
-_维护：PointRend 代码或 cfg 变更时，同步更新 §5–§28 各表与问题清单。_
+## 29. ft60 验收结果（2026-07-05/07）：双标尺 + val_twice + nobnd 对照
+
+> **完整表格与 ckpt 路径**见 [实验结果总结](yolo26s-seg-pointrend-experiment-results.md)。
+
+### 29.1 训练结果
+
+- `pointrend-ft60`（+bnd）：60/60，peak **mask mAP50-95=0.3958 @ep52**
+- `pointrend-ft60-nobnd`：60/60，peak **mask mAP50-95=0.3976 @ep51**（训练 val 略优）
+- 相对 recipe200 0.376：**+2.0pt**；box 同步 +2.5pt
+
+### 29.2 双标尺验收（仅 +bnd 已跑，eval batch=16）
+
+| 标尺 | ft60 (+bnd) | 官方 yolo26s-seg |
+|------|-------------|------------------|
+| COCONut v2 val | **0.381** ✅ | 0.3495 |
+| COCO val2017 | 0.3588 ❌ | 0.3859（缺口较 recipe200 减半） |
+
+### 29.3 val_twice：推理细分负收益
+
+indirect **0.3810** vs direct 0.3573 → **Δ −2.4pt**。部署保持 `seg_point_refine_infer=False`。
+
+### 29.4 boundary 对照结论
+
+nobnd 全程略优于 +bnd（peak 0.3976 vs 0.3958）；**建议默认 `seg_point_boundary=False`**。nobnd 独立双标尺待补。
+
+---
+
+*维护：PointRend 代码或 cfg 变更时，同步更新 §5–§29 各表与问题清单；指标以 `yolo26s-seg-pointrend-experiment-results.md` 为准。*

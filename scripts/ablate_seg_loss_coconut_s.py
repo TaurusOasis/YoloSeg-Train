@@ -9,6 +9,12 @@ G4 uses yolo26s-seg.yaml (Lite, coarse logits). G4m uses yolo26s-seg-pointrend.y
 seg_point_refine=True (PointHeadMLP). seg_point_roi defaults to 0.0 (bbox ROI); pass
 --seg-point-roi -1 for legacy full-grid sampling (ablation control).
 
+§2.6 boundary-band axis (orthogonal to G0-G6, only meaningful when seg_point>0):
+  --seg-point-boundary toggles the GT-Sobel-weighted blended candidate pool. **Fix
+  seg_point_boundary across any ROI/uniform comparison** — it changes the point-supervision
+  semantics (mixed pool) and cannot be freely combined with the legacy full-grid path
+  (design doc §10.2). Use G4m + --seg-point-boundary to ablate boundary on/off at fixed ROI.
+
 No distillation by default so mask-loss changes are isolated. recipe200-like aug recipe.
 """
 
@@ -52,6 +58,19 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Override seg_point_roi (default 0.0=bbox ROI; -1=legacy full-grid).",
     )
+    parser.add_argument(
+        "--seg-point-boundary",
+        dest="seg_point_boundary",
+        action="store_true",
+        default=None,
+        help="Enable GT-Sobel blended candidate pool (§2.6). Fix this across ROI/uniform comparisons.",
+    )
+    parser.add_argument(
+        "--no-seg-point-boundary",
+        dest="seg_point_boundary",
+        action="store_false",
+        help="Explicitly disable the blended boundary pool (uniform-in-bbox ROI).",
+    )
     parser.add_argument("--data", type=Path, default=DEFAULT_DATA, help="COCONut-S data YAML.")
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--batch", type=int, default=48)
@@ -74,6 +93,8 @@ def main() -> None:
     name = args.name or f"ablate-{args.group.lower()}-coconut-s"
     if args.seg_point_roi is not None:
         gains = {**gains, "seg_point_roi": args.seg_point_roi}
+    if args.seg_point_boundary is not None:
+        gains = {**gains, "seg_point_boundary": args.seg_point_boundary}
     train_args = {
         "data": str(args.data),
         "epochs": args.epochs,
@@ -99,10 +120,11 @@ def main() -> None:
         train_args.update({"distill_model": str(args.teacher), "dis": 3.0, "dis_proto": 1.0})
     roi = gains.get("seg_point_roi", 0.0)
     refine = gains.get("seg_point_refine", False)
+    bnd = gains.get("seg_point_boundary", False)
     print(
         f"Ablation {args.group} student={student}: "
         f"seg_comp={gains['seg_comp']} seg_bnd={gains['seg_bnd']} seg_point={gains['seg_point']} "
-        f"seg_point_refine={refine} seg_point_roi={roi}"
+        f"seg_point_refine={refine} seg_point_roi={roi} seg_point_boundary={bnd}"
     )
     YOLO(student).train(**train_args)
 
