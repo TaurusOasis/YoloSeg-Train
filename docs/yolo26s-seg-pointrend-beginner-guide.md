@@ -1001,10 +1001,10 @@ YOLO("yolo26s-seg-pointrend.yaml").train(
 
 ### 29.2 双标尺验收（仅 +bnd 已跑，eval batch=16）
 
-| 标尺 | ft60 (+bnd) | 官方 yolo26s-seg |
-|------|-------------|------------------|
-| COCONut v2 val | **0.381** ✅ | 0.3495 |
-| COCO val2017 | 0.3588 ❌ | 0.3859（缺口较 recipe200 减半） |
+| 标尺           | ft60 (+bnd)  | 官方 yolo26s-seg                |
+| -------------- | ------------ | ------------------------------- |
+| COCONut v2 val | **0.381** ✅ | 0.3495                          |
+| COCO val2017   | 0.3588 ❌    | 0.3859（缺口较 recipe200 减半） |
 
 ### 29.3 val_twice：推理细分负收益
 
@@ -1016,4 +1016,4 @@ nobnd 全程略优于 +bnd（peak 0.3976 vs 0.3958）；**建议默认 `seg_poin
 
 ---
 
-*维护：PointRend 代码或 cfg 变更时，同步更新 §5–§29 各表与问题清单；指标以 `yolo26s-seg-pointrend-experiment-results.md` 为准。*
+_维护：PointRend 代码或 cfg 变更时，同步更新 §5–§29 各表与问题清单；指标以 `yolo26s-seg-pointrend-experiment-results.md` 为准。_

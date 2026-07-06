@@ -105,9 +105,7 @@ def main() -> None:
     m_ind = _val_once(ckpt, args.data, args.imgsz, args.device, args.seeds[0], direct=False, subdiv_k=args.subdiv_k)
     ind_seg = _seg_metrics(m_ind)
     ind_box = _box_metrics(m_ind)
-    print(
-        "[indirect] map50-95={map50-95:.5f} map50={map50:.5f} map75={map75:.5f} ap95={ap95:.5f}".format(**ind_seg)
-    )
+    print("[indirect] map50-95={map50-95:.5f} map50={map50:.5f} map75={map75:.5f} ap95={ap95:.5f}".format(**ind_seg))
 
     # Direct (stochastic): average over seeds.
     dir_seg_records, dir_box_records = [], []
@@ -132,8 +130,10 @@ def main() -> None:
         print(f"  {k:10s}: indirect={ind_seg[k]:.5f}  direct={d_mean:.5f}±{d_std:.5f}  Δ={delta:+.5f}")
 
     print("\n=== sanity: box metrics (must be invariant) ===")
-    print(f"  indirect box_map50-95={ind_box['box_map50-95']:.5f}  "
-          f"direct box_map50-95={dir_box_agg['box_map50-95']['mean']:.5f}±{dir_box_agg['box_map50-95']['std']:.5f}")
+    print(
+        f"  indirect box_map50-95={ind_box['box_map50-95']:.5f}  "
+        f"direct box_map50-95={dir_box_agg['box_map50-95']['mean']:.5f}±{dir_box_agg['box_map50-95']['std']:.5f}"
+    )
 
     result = {
         "ckpt": ckpt,
