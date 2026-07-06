@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""2-GPU DDP smoke: verify point_head gradients allreduce correctly (§2.5 / design doc §10.2).
+r"""2-GPU DDP smoke: verify point_head gradients allreduce correctly (§2.5 / design doc §10.2).
 
 Launch:
   cd ultralytics && conda run -n yolo26-cu133 python -m torch.distributed.run \\
@@ -36,8 +36,17 @@ from ultralytics.utils.torch_utils import attempt_compile, unwrap_model
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--compile", action="store_true", help="Compile the model before DDP, matching trainer behavior.")
-    parser.add_argument("--boundary", action="store_true", help="Enable seg_bnd and boundary-weighted point ROI sampling.")
+    parser.add_argument(
+        "--compile", action="store_true", help="Compile the model before DDP, matching trainer behavior."
+    )
+    parser.add_argument(
+        "--boundary", action="store_true", help="Enable seg_bnd and boundary-weighted point ROI sampling."
+    )
+    parser.add_argument(
+        "--cpu",
+        action="store_true",
+        help="Run on CPU with gloo backend (no GPU needed). Lets the allreduce check run while GPUs are busy.",
+    )
     return parser.parse_args()
 
 
@@ -45,12 +54,17 @@ def _unwrap(model: DDP | SegmentationModel) -> SegmentationModel:
     return unwrap_model(model)
 
 
-def _init_dist() -> tuple[int, int, torch.device]:
+def _init_dist(cpu: bool) -> tuple[int, int, torch.device]:
     if "RANK" not in os.environ:
-        raise RuntimeError("Launch with: python -m torch.distributed.run --nproc_per_node=2 scripts/smoke_point_head_ddp.py")
+        raise RuntimeError(
+            "Launch with: python -m torch.distributed.run --nproc_per_node=2 scripts/smoke_point_head_ddp.py"
+        )
     rank = int(os.environ["RANK"])
     local_rank = int(os.environ["LOCAL_RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
+    if cpu:
+        dist.init_process_group(backend="gloo", init_method="env://")
+        return rank, world_size, torch.device("cpu")
     torch.cuda.set_device(local_rank)
     dist.init_process_group(backend="nccl", init_method="env://")
     return rank, world_size, torch.device(f"cuda:{local_rank}")
@@ -124,7 +138,9 @@ def _run_step(model: DDP, batch: dict[str, torch.Tensor]) -> torch.Tensor:
 
 def main() -> None:
     args = _parse_args()
-    rank, world_size, device = _init_dist()
+    if args.compile and args.cpu:
+        raise SystemExit("--compile requires CUDA (triton); drop --compile for --cpu mode.")
+    rank, world_size, device = _init_dist(args.cpu)
     torch.manual_seed(42 + rank)
 
     model = SegmentationModel("yolo26n-seg-pointrend.yaml", ch=3, nc=80, verbose=False)
@@ -137,7 +153,7 @@ def main() -> None:
     model = attempt_compile(model, device=device, imgsz=128, mode=args.compile)
     model = DDP(
         model,
-        device_ids=[device.index],
+        device_ids=[device.index] if not args.cpu else None,
         static_graph=bool(args.compile),
         find_unused_parameters=False,
     )

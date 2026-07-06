@@ -91,11 +91,7 @@ class DetectionTrainer(BaseTrainer):
         assert mode in {"train", "val"}, f"Mode must be 'train' or 'val', not {mode}."
         with torch_distributed_zero_first(rank):  # init dataset *.cache only once if DDP
             dataset = self.build_dataset(dataset_path, mode, batch_size)
-        if (
-            mode == "train"
-            and getattr(self.args, "dali", False)
-            and self.args.task == "segment"
-        ):
+        if mode == "train" and getattr(self.args, "dali", False) and self.args.task == "segment":
             from ultralytics.data.dali_seg import build_dali_seg_dataloader, dali_supported
 
             if not dali_supported():

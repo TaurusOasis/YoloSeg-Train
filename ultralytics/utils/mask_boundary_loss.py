@@ -13,7 +13,7 @@ import torch
 
 from ultralytics.utils.ops import crop_mask, sobel_magnitude
 
-__all__ = ["sobel_magnitude", "boundary_l2_loss_per_instance", "boundary_l2_loss"]
+__all__ = ["boundary_l2_loss", "boundary_l2_loss_per_instance", "sobel_magnitude"]
 
 
 def _as_single_channel(x: torch.Tensor, name: str) -> tuple[torch.Tensor, bool]:
@@ -85,9 +85,7 @@ def boundary_l2_loss(
     eps: float = 1e-6,
 ) -> torch.Tensor:
     """Compute reduced Sobel L2 boundary alignment loss."""
-    loss = boundary_l2_loss_per_instance(
-        pred, target, boxes, from_logits=from_logits, band_weight=band_weight, eps=eps
-    )
+    loss = boundary_l2_loss_per_instance(pred, target, boxes, from_logits=from_logits, band_weight=band_weight, eps=eps)
     if reduction == "none":
         return loss
     if reduction == "sum":

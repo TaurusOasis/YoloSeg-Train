@@ -9,12 +9,12 @@
 
 当前 recipe200 训练已经从早期平台区继续提升到新的最好点：
 
-| 指标 | 当前 best epoch 107 | 旧阶段 C v2 复评 | teacher yolo26x-seg v2 |
-|---|---:|---:|---:|
-| Box mAP50-95 | **0.43624** | 0.432 | 0.513 |
-| Mask mAP50-95 | **0.37592** | 0.373 | 0.404 |
-| Box mAP50 | **0.58887** | - | - |
-| Mask mAP50 | **0.57125** | - | - |
+| 指标          | 当前 best epoch 107 | 旧阶段 C v2 复评 | teacher yolo26x-seg v2 |
+| ------------- | ------------------: | ---------------: | ---------------------: |
+| Box mAP50-95  |         **0.43624** |            0.432 |                  0.513 |
+| Mask mAP50-95 |         **0.37592** |            0.373 |                  0.404 |
+| Box mAP50     |         **0.58887** |                - |                      - |
+| Mask mAP50    |         **0.57125** |                - |                      - |
 
 阶段性判断：
 
@@ -45,27 +45,27 @@ classes: COCO 80
 
 核心配置来自 `args.yaml` / checkpoint：
 
-| 参数 | 当前值 |
-|---|---:|
-| epochs | 200 |
-| completed epochs | 107 |
-| batch | 90 |
-| device | 0,1,2 |
-| imgsz | 640 |
-| multi_scale | 0.25 |
-| mosaic | 1.0 |
-| close_mosaic | 20 |
-| copy_paste | 0.4 |
-| mixup | 0.1 |
-| optimizer | MuSGD |
-| lr0 / lrf | 0.01 / 0.01 |
-| cos_lr | True |
-| amp | True, BF16 autocast |
-| mask_ratio | 4 |
-| teacher | `yolo26x-seg.pt` |
-| dis / dis_proto | 3.0 / 1.0 |
-| distill_warmup_epochs | 3.0 |
-| distill_loss_clip | 10.0 |
+| 参数                  |              当前值 |
+| --------------------- | ------------------: |
+| epochs                |                 200 |
+| completed epochs      |                 107 |
+| batch                 |                  90 |
+| device                |               0,1,2 |
+| imgsz                 |                 640 |
+| multi_scale           |                0.25 |
+| mosaic                |                 1.0 |
+| close_mosaic          |                  20 |
+| copy_paste            |                 0.4 |
+| mixup                 |                 0.1 |
+| optimizer             |               MuSGD |
+| lr0 / lrf             |         0.01 / 0.01 |
+| cos_lr                |                True |
+| amp                   | True, BF16 autocast |
+| mask_ratio            |                   4 |
+| teacher               |    `yolo26x-seg.pt` |
+| dis / dis_proto       |           3.0 / 1.0 |
+| distill_warmup_epochs |                 3.0 |
+| distill_loss_clip     |                10.0 |
 
 当前训练仍是标准 YOLO segment 监督：
 
@@ -86,14 +86,14 @@ COCONut panoptic RGB PNG + JSON
 
 关键 epoch：
 
-| epoch | Box mAP50-95 | Mask mAP50-95 | Box mAP50 | Mask mAP50 | Box recall | Mask recall | dis_feat | dis_proto | lr/pg0 |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 13 | 0.40790 | 0.35382 | 0.55528 | 0.53909 | 0.51560 | 0.50390 | 0.73780 | 0.44071 | 0.02974 |
-| 16 | 0.40723 | 0.35238 | 0.55442 | 0.53814 | 0.51397 | 0.49726 | 0.73409 | 0.43623 | 0.02959 |
-| 50 | 0.41335 | 0.35639 | 0.56142 | 0.54416 | 0.52059 | 0.50645 | 0.71189 | 0.42116 | 0.02581 |
-| 75 | 0.42218 | 0.36423 | 0.57301 | 0.55463 | 0.52727 | 0.51797 | 0.68840 | 0.40291 | 0.02105 |
-| 100 | 0.43217 | 0.37195 | 0.58449 | 0.56574 | 0.53645 | 0.52385 | 0.66087 | 0.38271 | 0.01538 |
-| 107 | **0.43624** | **0.37592** | **0.58887** | **0.57125** | **0.54063** | **0.53200** | **0.65143** | **0.37632** | **0.01375** |
+| epoch | Box mAP50-95 | Mask mAP50-95 |   Box mAP50 |  Mask mAP50 |  Box recall | Mask recall |    dis_feat |   dis_proto |      lr/pg0 |
+| ----: | -----------: | ------------: | ----------: | ----------: | ----------: | ----------: | ----------: | ----------: | ----------: |
+|    13 |      0.40790 |       0.35382 |     0.55528 |     0.53909 |     0.51560 |     0.50390 |     0.73780 |     0.44071 |     0.02974 |
+|    16 |      0.40723 |       0.35238 |     0.55442 |     0.53814 |     0.51397 |     0.49726 |     0.73409 |     0.43623 |     0.02959 |
+|    50 |      0.41335 |       0.35639 |     0.56142 |     0.54416 |     0.52059 |     0.50645 |     0.71189 |     0.42116 |     0.02581 |
+|    75 |      0.42218 |       0.36423 |     0.57301 |     0.55463 |     0.52727 |     0.51797 |     0.68840 |     0.40291 |     0.02105 |
+|   100 |      0.43217 |       0.37195 |     0.58449 |     0.56574 |     0.53645 |     0.52385 |     0.66087 |     0.38271 |     0.01538 |
+|   107 |  **0.43624** |   **0.37592** | **0.58887** | **0.57125** | **0.54063** | **0.53200** | **0.65143** | **0.37632** | **0.01375** |
 
 解读：
 
@@ -139,11 +139,11 @@ GPU0 free only 84 MiB.
 
 对应样本原始标签检查：
 
-| sample | label rows | coord range | format |
-|---|---:|---|---|
-| `train2017/000000383462` | 3 | `[0.051562, 0.954688]` | OK |
-| `train2017/000000562232` | 13 | `[0.000000, 0.998437]` | OK |
-| `unlabeled2017/000000100365` | 3 | `[0.093750, 0.998437]` | OK |
+| sample                       | label rows | coord range            | format |
+| ---------------------------- | ---------: | ---------------------- | ------ |
+| `train2017/000000383462`     |          3 | `[0.051562, 0.954688]` | OK     |
+| `train2017/000000562232`     |         13 | `[0.000000, 0.998437]` | OK     |
+| `unlabeled2017/000000100365` |          3 | `[0.093750, 0.998437]` | OK     |
 
 判断：
 
@@ -166,19 +166,19 @@ GPU0 free only 84 MiB.
 
 已知同标尺结果：
 
-| 模型/阶段 | Val 标尺 | Box mAP50-95 | Mask mAP50-95 |
-|---|---|---:|---:|
-| teacher `yolo26x-seg.pt` | COCONut-B v2 val | 0.513 | 0.404 |
-| 旧 student C best | COCONut-B v2 val | 0.432 | 0.373 |
-| 当前 recipe200 best | COCONut-B v2 val | **0.436** | **0.376** |
+| 模型/阶段                | Val 标尺         | Box mAP50-95 | Mask mAP50-95 |
+| ------------------------ | ---------------- | -----------: | ------------: |
+| teacher `yolo26x-seg.pt` | COCONut-B v2 val |        0.513 |         0.404 |
+| 旧 student C best        | COCONut-B v2 val |        0.432 |         0.373 |
+| 当前 recipe200 best      | COCONut-B v2 val |    **0.436** |     **0.376** |
 
 COCO official val2017 已知旧结论：
 
-| 模型/阶段 | COCO official val2017 Box | COCO official val2017 Mask |
-|---|---:|---:|
-| teacher `yolo26x-seg.pt` | 0.558 | 0.448 |
-| official `yolo26s-seg.pt` | 0.468 | 0.386 |
-| 旧 student C best | 0.415 | 0.356 |
+| 模型/阶段                 | COCO official val2017 Box | COCO official val2017 Mask |
+| ------------------------- | ------------------------: | -------------------------: |
+| teacher `yolo26x-seg.pt`  |                     0.558 |                      0.448 |
+| official `yolo26s-seg.pt` |                     0.468 |                      0.386 |
+| 旧 student C best         |                     0.415 |                      0.356 |
 
 当前 recipe200 best 尚未重新跑 COCO official val2017。必须补这一步才能判断 recipe200 是否只提升 COCONut v2 域内，还是也改善 COCO 官方标尺。
 
@@ -235,16 +235,16 @@ PointRend-style points 补充不确定点 / 边界难点
 
 当前工作区已经存在一组未提交的本地改动，应视为 WIP，尚未等同稳定上线：
 
-| 文件 | 作用 | 状态 |
-|---|---|---|
-| `ultralytics/utils/mask_point_sampling.py` | PointRend-style `point_sample`、不确定点采样、point focal/dice | 已有 |
-| `ultralytics/utils/mask_boundary_loss.py` | Sobel magnitude + per-instance boundary L2 | 已有 |
-| `ultralytics/utils/mask_completeness_loss.py` | Focal-Tversky completeness loss | 已有 |
-| `ultralytics/utils/loss.py` | `single_mask_loss()` 已接 `seg_comp/seg_bnd/seg_point` | 已有本地修改 |
-| `ultralytics/cfg/default.yaml` | 新增 `seg_comp/seg_bnd/seg_point*`，默认 0 | 已有本地修改 |
-| `tests/test_mask_boundary_loss.py` | Sobel/boundary helper 单测 | 已有 |
-| `tests/test_mask_completeness_loss.py` | Tversky helper 单测 | 已有 |
-| `scripts/ablate_seg_loss_coconut_s.py` | COCONut-S 30 epoch 消融脚本 | 已有 |
+| 文件                                          | 作用                                                           | 状态         |
+| --------------------------------------------- | -------------------------------------------------------------- | ------------ |
+| `ultralytics/utils/mask_point_sampling.py`    | PointRend-style `point_sample`、不确定点采样、point focal/dice | 已有         |
+| `ultralytics/utils/mask_boundary_loss.py`     | Sobel magnitude + per-instance boundary L2                     | 已有         |
+| `ultralytics/utils/mask_completeness_loss.py` | Focal-Tversky completeness loss                                | 已有         |
+| `ultralytics/utils/loss.py`                   | `single_mask_loss()` 已接 `seg_comp/seg_bnd/seg_point`         | 已有本地修改 |
+| `ultralytics/cfg/default.yaml`                | 新增 `seg_comp/seg_bnd/seg_point*`，默认 0                     | 已有本地修改 |
+| `tests/test_mask_boundary_loss.py`            | Sobel/boundary helper 单测                                     | 已有         |
+| `tests/test_mask_completeness_loss.py`        | Tversky helper 单测                                            | 已有         |
+| `scripts/ablate_seg_loss_coconut_s.py`        | COCONut-S 30 epoch 消融脚本                                    | 已有         |
 
 当前 recipe200 训练没有启用这些 loss。`args.yaml` 中没有 `seg_comp/seg_bnd/seg_point`，且默认值为 0；因此当前 best 可以作为“无 boundary/point loss”的基线。
 
@@ -271,65 +271,65 @@ PointRend 分两种：
 
 1. **分项日志**
 
-   当前 `seg_comp/seg_bnd/seg_point` 加进 `seg_loss` 后，`results.csv` 只能看到总 `seg_loss`。建议至少在调参阶段增加内部 debug 或临时日志，记录：
+    当前 `seg_comp/seg_bnd/seg_point` 加进 `seg_loss` 后，`results.csv` 只能看到总 `seg_loss`。建议至少在调参阶段增加内部 debug 或临时日志，记录：
 
-   ```text
-   train/seg_bce
-   train/seg_comp
-   train/seg_bnd
-   train/seg_point
-   ```
+    ```text
+    train/seg_bce
+    train/seg_comp
+    train/seg_bnd
+    train/seg_point
+    ```
 
-   否则很难判断是 boundary 在起作用，还是把主 BCE 压坏。
+    否则很难判断是 boundary 在起作用，还是把主 BCE 压坏。
 
 2. **默认关闭，显式开启**
 
-   `default.yaml` 中保持：
+    `default.yaml` 中保持：
 
-   ```yaml
-   seg_comp: 0.0
-   seg_bnd: 0.0
-   seg_point: 0.0
-   ```
+    ```yaml
+    seg_comp: 0.0
+    seg_bnd: 0.0
+    seg_point: 0.0
+    ```
 
-   这能保证现有 checkpoint resume 行为不变。
+    这能保证现有 checkpoint resume 行为不变。
 
 3. **低权重起步**
 
-   不建议第一次 COCONut-B 大训练就用 `1.0/1.0/1.0` 全开。建议先从小权重开始：
+    不建议第一次 COCONut-B 大训练就用 `1.0/1.0/1.0` 全开。建议先从小权重开始：
 
-   ```text
-   seg_comp=0.2~0.5
-   seg_bnd=0.05~0.25
-   seg_point=0.2~0.5
-   seg_point_num=112 或 196
-   ```
+    ```text
+    seg_comp=0.2~0.5
+    seg_bnd=0.05~0.25
+    seg_point=0.2~0.5
+    seg_point_num=112 或 196
+    ```
 
-   原因：COCONut v2 当前训练 mask 仍是 poly -> raster -> downsample，边界本身有台阶/锯齿；过强 boundary loss 会放大标签 aliasing。
+    原因：COCONut v2 当前训练 mask 仍是 poly -> raster -> downsample，边界本身有台阶/锯齿；过强 boundary loss 会放大标签 aliasing。
 
 4. **避免与 mask_ratio=2 同时首测**
 
-   `mask_ratio=2` 是另一个强变量，会明显增加显存和 mask 监督分辨率。第一轮不要同时改：
+    `mask_ratio=2` 是另一个强变量，会明显增加显存和 mask 监督分辨率。第一轮不要同时改：
 
-   ```text
-   实验 1：mask_ratio=4 + boundary/point loss
-   实验 2：mask_ratio=2 + baseline loss
-   实验 3：mask_ratio=2 + 最优 boundary/point 组合
-   ```
+    ```text
+    实验 1：mask_ratio=4 + boundary/point loss
+    实验 2：mask_ratio=2 + baseline loss
+    实验 3：mask_ratio=2 + 最优 boundary/point 组合
+    ```
 
 ### 7.5 推荐消融顺序
 
 先用 COCONut-S 或 COCONut-B 小轮数跑消融，不直接开 200 epoch：
 
-| 实验 | seg_comp | seg_bnd | seg_point | 目的 |
-|---|---:|---:|---:|---|
-| G0 baseline | 0 | 0 | 0 | 复现当前 loss |
-| G1 completeness | 0.3 | 0 | 0 | 看是否减少漏分/孔洞 |
-| G2 boundary | 0 | 0.1 | 0 | 看边界项是否提升 mask AP75/AP95 |
-| G3 point | 0 | 0 | 0.3 | 看 uncertain points 是否改善 high-IoU |
-| G4 comp+point | 0.3 | 0 | 0.3 | 区域完整性 + 难点采样 |
-| G5 bnd+point | 0 | 0.1 | 0.3 | 边界 + 难点采样 |
-| G6 all-low | 0.3 | 0.1 | 0.3 | 低权重组合 |
+| 实验            | seg_comp | seg_bnd | seg_point | 目的                                  |
+| --------------- | -------: | ------: | --------: | ------------------------------------- |
+| G0 baseline     |        0 |       0 |         0 | 复现当前 loss                         |
+| G1 completeness |      0.3 |       0 |         0 | 看是否减少漏分/孔洞                   |
+| G2 boundary     |        0 |     0.1 |         0 | 看边界项是否提升 mask AP75/AP95       |
+| G3 point        |        0 |       0 |       0.3 | 看 uncertain points 是否改善 high-IoU |
+| G4 comp+point   |      0.3 |       0 |       0.3 | 区域完整性 + 难点采样                 |
+| G5 bnd+point    |        0 |     0.1 |       0.3 | 边界 + 难点采样                       |
+| G6 all-low      |      0.3 |     0.1 |       0.3 | 低权重组合                            |
 
 评估指标必须包括：
 
@@ -392,53 +392,51 @@ seg loss gains low weight
 ## 8. 建议的下一步操作清单
 
 1. **先保全并评估当前 best**
-
-   - 当前 best: `runs/segment/yolo26s-seg-coconut-b-v2-distill-recipe200/weights/best.pt`
-   - 先跑 COCONut-B v2 val 复评；
-   - 再跑 COCO official val2017；
-   - 输出 per-class AP top/bottom。
+    - 当前 best: `runs/segment/yolo26s-seg-coconut-b-v2-distill-recipe200/weights/best.pt`
+    - 先跑 COCONut-B v2 val 复评；
+    - 再跑 COCO official val2017；
+    - 输出 per-class AP top/bottom。
 
 2. **继续 baseline**
 
-   不建议原样 b90 继续。建议：
+    不建议原样 b90 继续。建议：
 
-   ```bash
-   /home/genesis/Tools/Anaconda/envs/yolo26-cu133/bin/python scripts/train_yolo26s_seg_coconut_distill.py \
-     --resume runs/segment/yolo26s-seg-coconut-b-v2-distill-recipe200/weights/last.pt \
-     --data /home/genesis/Train/Dataset/COCONut_b_yolo_seg_v2/coconut-b-seg.yaml \
-     --batch 80 \
-     --device 0,1,2 \
-     --workers 8
-   ```
+    ```bash
+    /home/genesis/Tools/Anaconda/envs/yolo26-cu133/bin/python scripts/train_yolo26s_seg_coconut_distill.py \
+      --resume runs/segment/yolo26s-seg-coconut-b-v2-distill-recipe200/weights/last.pt \
+      --data /home/genesis/Train/Dataset/COCONut_b_yolo_seg_v2/coconut-b-seg.yaml \
+      --batch 80 \
+      --device 0,1,2 \
+      --workers 8
+    ```
 
 3. **稳定 WIP loss 代码**
-
-   - 跑相关单测；
-   - 增加 loss 分项日志或至少临时 debug 输出；
-   - 确认默认 `seg_* = 0` 时与 legacy loss bit-level / 数值近似一致；
-   - 确认 DDP + BF16 下无 NaN。
+    - 跑相关单测；
+    - 增加 loss 分项日志或至少临时 debug 输出；
+    - 确认默认 `seg_* = 0` 时与 legacy loss bit-level / 数值近似一致；
+    - 确认 DDP + BF16 下无 NaN。
 
 4. **跑 COCONut-S / 短周期消融**
 
-   优先小权重组合：
+    优先小权重组合：
 
-   ```text
-   seg_comp=0.3
-   seg_bnd=0.1
-   seg_point=0.3
-   seg_point_num=112
-   ```
+    ```text
+    seg_comp=0.3
+    seg_bnd=0.1
+    seg_point=0.3
+    seg_point_num=112
+    ```
 
 5. **决定是否升级监督分辨率**
 
-   若 boundary/point loss 对 AP75/AP95 有收益，再考虑：
+    若 boundary/point loss 对 AP75/AP95 有收益，再考虑：
 
-   ```text
-   mask_ratio=2
-   或更密 poly / approx_epsilon 更小
-   ```
+    ```text
+    mask_ratio=2
+    或更密 poly / approx_epsilon 更小
+    ```
 
-   但这会显著增加显存，应和 batch/multi_scale 分开消融。
+    但这会显著增加显存，应和 batch/multi_scale 分开消融。
 
 ---
 

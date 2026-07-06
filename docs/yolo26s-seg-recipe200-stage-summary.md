@@ -9,15 +9,15 @@
 
 ## 1. 执行摘要
 
-| 维度 | 结论 |
-|---|---|
-| **主线目标** | P2-2：v2 标签 + 升级配方 + 全权重蒸馏，200 epoch 长训 |
-| **实际进度** | **107/200（53.5%）**；batch=90 段自 ep17 连续稳定 ~90 epoch |
-| **最优权重** | **ep107 `best.pt`**，v2 val mask mAP50-95 = **0.376** |
-| **vs 阶段 C best** | mask +0.003、box +0.004 → **v2 标尺已超越 C best** |
-| **vs Teacher** | mask 仍低 **0.028**（0.376 vs 0.404） |
-| **停止原因** | ep108 高分辨率 batch non-finite → 恢复 last.pt → **recovery OOM** |
-| **mask 子损失** | PointRend / boundary / completeness **代码就绪，recipe200 未启用**（gain=0） |
+| 维度               | 结论                                                                         |
+| ------------------ | ---------------------------------------------------------------------------- |
+| **主线目标**       | P2-2：v2 标签 + 升级配方 + 全权重蒸馏，200 epoch 长训                        |
+| **实际进度**       | **107/200（53.5%）**；batch=90 段自 ep17 连续稳定 ~90 epoch                  |
+| **最优权重**       | **ep107 `best.pt`**，v2 val mask mAP50-95 = **0.376**                        |
+| **vs 阶段 C best** | mask +0.003、box +0.004 → **v2 标尺已超越 C best**                           |
+| **vs Teacher**     | mask 仍低 **0.028**（0.376 vs 0.404）                                        |
+| **停止原因**       | ep108 高分辨率 batch non-finite → 恢复 last.pt → **recovery OOM**            |
+| **mask 子损失**    | PointRend / boundary / completeness **代码就绪，recipe200 未启用**（gain=0） |
 
 ---
 
@@ -34,31 +34,31 @@ P3   mask 子损失消融 (seg_comp/bnd/point)    📋 代码就绪，待 GPU + 
 
 ### 2.1 recipe200 配方（`args.yaml`）
 
-| 项 | 值 |
-|---|---|
-| 数据 | `COCONut_b_yolo_seg_v2/coconut-b-seg.yaml` |
-| 初始化 | 阶段 C `best.pt` |
-| Teacher | `yolo26x-seg.pt`，`dis=3.0`, `dis_proto=1.0` |
-| epochs | 200，`cos_lr=True`, `close_mosaic=20` |
-| 增强 | `mosaic=1.0`, `copy_paste=0.4`, `mixup=0.1`, **`multi_scale=0.25`** |
-| batch | 全局 **90**（3×5090D，每卡 30） |
-| mask 子损失 | **`seg_comp=0`, `seg_bnd=0`, `seg_point=0`** |
+| 项          | 值                                                                  |
+| ----------- | ------------------------------------------------------------------- |
+| 数据        | `COCONut_b_yolo_seg_v2/coconut-b-seg.yaml`                          |
+| 初始化      | 阶段 C `best.pt`                                                    |
+| Teacher     | `yolo26x-seg.pt`，`dis=3.0`, `dis_proto=1.0`                        |
+| epochs      | 200，`cos_lr=True`, `close_mosaic=20`                               |
+| 增强        | `mosaic=1.0`, `copy_paste=0.4`, `mixup=0.1`, **`multi_scale=0.25`** |
+| batch       | 全局 **90**（3×5090D，每卡 30）                                     |
+| mask 子损失 | **`seg_comp=0`, `seg_bnd=0`, `seg_point=0`**                        |
 
 ---
 
 ## 3. recipe200 训练时间线
 
-| 时间 | 事件 |
-|---|---|
-| 07-02 17:03 | 启动 batch=96，C best 初始化 |
-| 07-02 20:58 | SIGINT 中断（~ep11） |
-| 07-02 22:30 | resume batch=150 → **OOM** |
-| 07-03 00:28 | resume batch=100 → ep17 **OOM + inf** |
-| 07-03 00:53 | **resume batch=90** → 稳定段开始 |
-| 07-03 ~ep48 | 走出 ep18 平台，指标单调上行 |
-| 07-04 ~ep104 | **追平 C best**（mask 50-95 ≈ 0.374） |
-| 07-04 11:43 | **ep107 刷新 best**（mask 0.376） |
-| 07-04 11:55 | **ep108 batch1423/2685 崩溃**（见 §5） |
+| 时间         | 事件                                   |
+| ------------ | -------------------------------------- |
+| 07-02 17:03  | 启动 batch=96，C best 初始化           |
+| 07-02 20:58  | SIGINT 中断（~ep11）                   |
+| 07-02 22:30  | resume batch=150 → **OOM**             |
+| 07-03 00:28  | resume batch=100 → ep17 **OOM + inf**  |
+| 07-03 00:53  | **resume batch=90** → 稳定段开始       |
+| 07-03 ~ep48  | 走出 ep18 平台，指标单调上行           |
+| 07-04 ~ep104 | **追平 C best**（mask 50-95 ≈ 0.374）  |
+| 07-04 11:43  | **ep107 刷新 best**（mask 0.376）      |
+| 07-04 11:55  | **ep108 batch1423/2685 崩溃**（见 §5） |
 
 ---
 
@@ -66,42 +66,42 @@ P3   mask 子损失消融 (seg_comp/bnd/point)    📋 代码就绪，待 GPU + 
 
 ### 4.1 标尺对照（mask mAP50-95）
 
-| 模型 | v2 val | COCO val2017 | 说明 |
-|---|---:|---:|---|
-| Teacher yolo26x | 0.404 | — | `v2val-teacher-x/` |
-| 阶段 C best (e98) | **0.373** | 0.356 | 100ep v1 训练 + v2 复评 |
-| **recipe200 best (e107)** | **0.376** | 待复测 | 当前交付候选 |
-| 官方 yolo26s-seg | 0.350 | **0.386** | ep91 时评测 |
-| recipe200 ep91 快照 | 0.369 | 0.329 | `eval_compare.../summary_plots_*.json` |
+| 模型                      |    v2 val | COCO val2017 | 说明                                   |
+| ------------------------- | --------: | -----------: | -------------------------------------- |
+| Teacher yolo26x           |     0.404 |            — | `v2val-teacher-x/`                     |
+| 阶段 C best (e98)         | **0.373** |        0.356 | 100ep v1 训练 + v2 复评                |
+| **recipe200 best (e107)** | **0.376** |       待复测 | 当前交付候选                           |
+| 官方 yolo26s-seg          |     0.350 |    **0.386** | ep91 时评测                            |
+| recipe200 ep91 快照       |     0.369 |        0.329 | `eval_compare.../summary_plots_*.json` |
 
 ### 4.2 里程碑曲线（mask mAP50-95）
 
-| Epoch | 值 | 阶段 |
-|---:|---:|---|
-| 1 | 0.344 | 起跳 |
-| 18 | 0.354 | 早期平台峰 |
-| 48 | 0.356 | 平台突破 |
-| 76 | 0.364 | 稳定爬升 |
-| 91 | 0.369 | 逼近 C best |
-| 104 | 0.374 | 追平 C best |
-| **107** | **0.376** | **best** |
+|   Epoch |        值 | 阶段        |
+| ------: | --------: | ----------- |
+|       1 |     0.344 | 起跳        |
+|      18 |     0.354 | 早期平台峰  |
+|      48 |     0.356 | 平台突破    |
+|      76 |     0.364 | 稳定爬升    |
+|      91 |     0.369 | 逼近 C best |
+|     104 |     0.374 | 追平 C best |
+| **107** | **0.376** | **best**    |
 
 ep107 完整指标（v2 val，45003 实例）：
 
-| | Box | Mask |
-|---|---:|---:|
-| mAP50 | 0.589 | 0.571 |
-| mAP50-95 | **0.436** | **0.376** |
-| P / R | 0.673 / 0.541 | 0.669 / 0.532 |
+|          |           Box |          Mask |
+| -------- | ------------: | ------------: |
+| mAP50    |         0.589 |         0.571 |
+| mAP50-95 |     **0.436** |     **0.376** |
+| P / R    | 0.673 / 0.541 | 0.669 / 0.532 |
 
 ### 4.3 P2-2 验收清单
 
-| 项 | 目标 | ep107 | 状态 |
-|---|---|---:|---|
-| v2 val 超 C best | mask > 0.373 | 0.376 | ✅ |
-| v2 超官方预训练 | mask > 0.350 | 0.376 | ✅ |
-| COCO val2017 硬约束 | mask ≥ 0.386 | 未测（ep107） | ❓ |
-| 200ep + close_mosaic | 充分收敛 | 107/200 | ❌ 未完成 |
+| 项                   | 目标         |         ep107 | 状态      |
+| -------------------- | ------------ | ------------: | --------- |
+| v2 val 超 C best     | mask > 0.373 |         0.376 | ✅        |
+| v2 超官方预训练      | mask > 0.350 |         0.376 | ✅        |
+| COCO val2017 硬约束  | mask ≥ 0.386 | 未测（ep107） | ❓        |
+| 200ep + close_mosaic | 充分收敛     |       107/200 | ❌ 未完成 |
 
 ---
 
@@ -133,11 +133,11 @@ DDP exitcode=1 → SIGTERM 清理其它 rank
 
 ### 5.3 根因归纳
 
-| 层级 | 原因 |
-|---|---|
-| 直接 | recovery forward OOM |
-| 触发 | 800px 峰值 batch 上 non-finite（某 rank） |
-| 结构 | `batch=90` + `multi_scale=0.25` + teacher 蒸馏 ≈ 显存上限 |
+| 层级 | 原因                                                         |
+| ---- | ------------------------------------------------------------ |
+| 直接 | recovery forward OOM                                         |
+| 触发 | 800px 峰值 batch 上 non-finite（某 rank）                    |
+| 结构 | `batch=90` + `multi_scale=0.25` + teacher 蒸馏 ≈ 显存上限    |
 | 历史 | batch=100/150 曾 OOM；batch=90 稳定 90 epoch 后在 ep108 触顶 |
 
 ---
@@ -155,12 +155,12 @@ runs/segment/yolo26s-seg-coconut-b-v2-distill-recipe200/weights/
 
 ### 6.2 日志与监控
 
-| 资源 | 路径 |
-|---|---|
-| 训练 log | `runs/segment/train_logs/yolo26s-seg-coconut-b-v2-distill-recipe200.resume-b90.log` |
-| 指标 CSV | `runs/segment/yolo26s-seg-coconut-b-v2-distill-recipe200/results.csv` |
-| SwanLab | `runs/segment/swanlab/yolo26s-seg-coconut-b-v2-distill-recipe200/run-20260703_005356-vtl1c8cp/` |
-| 对比评测 | `runs/segment/eval_compare_recipe200_vs_official/`（ep18–91 快照，ep107 待补） |
+| 资源     | 路径                                                                                            |
+| -------- | ----------------------------------------------------------------------------------------------- |
+| 训练 log | `runs/segment/train_logs/yolo26s-seg-coconut-b-v2-distill-recipe200.resume-b90.log`             |
+| 指标 CSV | `runs/segment/yolo26s-seg-coconut-b-v2-distill-recipe200/results.csv`                           |
+| SwanLab  | `runs/segment/swanlab/yolo26s-seg-coconut-b-v2-distill-recipe200/run-20260703_005356-vtl1c8cp/` |
+| 对比评测 | `runs/segment/eval_compare_recipe200_vs_official/`（ep18–91 快照，ep107 待补）                  |
 
 ### 6.3 可视化评测（ep91 快照）
 
@@ -180,9 +180,9 @@ eval_compare_recipe200_vs_official/
 ### 7.1 配置键（`default.yaml`）
 
 ```yaml
-seg_comp: 0.0          # Focal-Tversky 完整性（α=0.3 β=0.7 γ=0.75）
-seg_bnd: 0.0           # Sobel 边界 L2（GT 边界带加权）
-seg_point: 0.0         # PointRend Lite：uncertainty 采样 + focal + dice
+seg_comp: 0.0 # Focal-Tversky 完整性（α=0.3 β=0.7 γ=0.75）
+seg_bnd: 0.0 # Sobel 边界 L2（GT 边界带加权）
+seg_point: 0.0 # PointRend Lite：uncertainty 采样 + focal + dice
 seg_point_num: 112
 seg_point_oversample: 3
 seg_point_importance: 0.75
@@ -203,24 +203,24 @@ total = bce_term                           # 原 YOLO mask BCE（crop + area nor
 
 ### 7.3 相关文件（**未提交**，工作区）
 
-| 文件 | 状态 |
-|---|---|
-| `ultralytics/utils/mask_point_sampling.py` | ✅ 新增 |
-| `ultralytics/utils/loss.py` | ✅ 扩展 `single_mask_loss` |
-| `ultralytics/utils/ops.py` | ✅ `sobel_magnitude` |
-| `ultralytics/cfg/default.yaml` | ✅ 6 个新键 |
-| `scripts/ablate_seg_loss_coconut_s.py` | ✅ G0–G6 消融脚本 |
-| `scripts/eval_compare_recipe200_vs_official.py` | ✅ 双标尺评测 |
-| `ultralytics/data/dali_seg.py` | 🚧 实验性，未接入训练 |
-| `tests/test_engine.py` | ✅ plumbing + 等价性 |
+| 文件                                            | 状态                       |
+| ----------------------------------------------- | -------------------------- |
+| `ultralytics/utils/mask_point_sampling.py`      | ✅ 新增                    |
+| `ultralytics/utils/loss.py`                     | ✅ 扩展 `single_mask_loss` |
+| `ultralytics/utils/ops.py`                      | ✅ `sobel_magnitude`       |
+| `ultralytics/cfg/default.yaml`                  | ✅ 6 个新键                |
+| `scripts/ablate_seg_loss_coconut_s.py`          | ✅ G0–G6 消融脚本          |
+| `scripts/eval_compare_recipe200_vs_official.py` | ✅ 双标尺评测              |
+| `ultralytics/data/dali_seg.py`                  | 🚧 实验性，未接入训练      |
+| `tests/test_engine.py`                          | ✅ plumbing + 等价性       |
 
 ### 7.4 与 segPipeline eval 的关系
 
-| 组件 | 训练 | 评测 |
-|---|---|---|
-| `seg_bnd` (Sobel) | train loss | — |
-| `seg_point` (PointRend) | train loss | — |
-| `boundary_f_score` | — | `segPipeline/.../boundary.py` 后处理 |
+| 组件                    | 训练       | 评测                                 |
+| ----------------------- | ---------- | ------------------------------------ |
+| `seg_bnd` (Sobel)       | train loss | —                                    |
+| `seg_point` (PointRend) | train loss | —                                    |
+| `boundary_f_score`      | —          | `segPipeline/.../boundary.py` 后处理 |
 
 训练 loss 与 eval 边界 F-score **不同链路**；需 `eval_mask_boundary.py`（待写）做 checkpoint 级对照。
 
@@ -242,11 +242,11 @@ total = bce_term                           # 原 YOLO mask BCE（crop + area nor
 
 **不要**原样 `batch=90 + multi_scale=0.25` 硬 resume。
 
-| 方案 | batch | multi_scale | 说明 |
-|---|---:|---:|---|
-| **A1（推荐）** | **84** | 0.25 | 降 ~7% 显存，保留增强 |
-| A2 | 90 | **0.15** | 上限 736px，避 ep108 类 800px batch |
-| A3（最稳） | **80** | **0.15** | 跑满 ep180 close_mosaic |
+| 方案           |  batch | multi_scale | 说明                                |
+| -------------- | -----: | ----------: | ----------------------------------- |
+| **A1（推荐）** | **84** |        0.25 | 降 ~7% 显存，保留增强               |
+| A2             |     90 |    **0.15** | 上限 736px，避 ep108 类 800px batch |
+| A3（最稳）     | **80** |    **0.15** | 跑满 ep180 close_mosaic             |
 
 ```bash
 cd /home/genesis/Train/Code/ultralytics
@@ -266,13 +266,13 @@ python scripts/train_yolo26s_seg_coconut_distill.py \
 
 **原则**：先 **G0/G2/G4**（单因子），再组合；**不在 recipe200 主线上直接开大 gain**。
 
-| 组 | seg_comp | seg_bnd | seg_point | 目的 |
-|---|---:|---:|---:|---|
-| G0 | 0 | 0 | 0 | baseline |
-| G2 | 0 | 1 | 0 | boundary only |
-| G4 | 0 | 0 | 1 | **PointRend only** |
-| G5 | 0 | 1 | 1 | boundary + point |
-| G6 | 1 | 1 | 1 | all |
+| 组  | seg_comp | seg_bnd | seg_point | 目的               |
+| --- | -------: | ------: | --------: | ------------------ |
+| G0  |        0 |       0 |         0 | baseline           |
+| G2  |        0 |       1 |         0 | boundary only      |
+| G4  |        0 |       0 |         1 | **PointRend only** |
+| G5  |        0 |       1 |         1 | boundary + point   |
+| G6  |        1 |       1 |         1 | all                |
 
 ```bash
 # COCONut-S 30ep，无蒸馏，脚本已就绪
@@ -282,9 +282,9 @@ python scripts/ablate_seg_loss_coconut_s.py --group G4 --device 0
 **推荐初始 gain（消融起点，非最终 recipe）**：
 
 ```yaml
-seg_point: 0.5    # 或 1.0，与 seg_bnd 不要同时过大
-seg_bnd: 0.0      # G4 单测 point 时为 0
-seg_comp: 0.0     # 完整性靠 G1 单独测
+seg_point: 0.5 # 或 1.0，与 seg_bnd 不要同时过大
+seg_bnd: 0.0 # G4 单测 point 时为 0
+seg_comp: 0.0 # 完整性靠 G1 单独测
 ```
 
 验收：v2 val mask 50-95 + segPipeline `boundary_f_score`（待 eval 脚本）。
@@ -306,13 +306,13 @@ seg_comp: 0.0     # 完整性靠 G1 单独测
 
 ## 10. 风险与决策点
 
-| 风险 | 缓解 |
-|---|---|
-| 续训再次 non-finite/OOM | batch 84 + 可选 multi_scale 0.15 |
-| mask loss 与蒸馏抢显存 | 消融用 COCONut-S、无 teacher；主训 gain 小步加 |
-| point+bnd 同时过大 | G5 仅作组合探路；生产 recipe 二选一为主 |
+| 风险                      | 缓解                                               |
+| ------------------------- | -------------------------------------------------- |
+| 续训再次 non-finite/OOM   | batch 84 + 可选 multi_scale 0.15                   |
+| mask loss 与蒸馏抢显存    | 消融用 COCONut-S、无 teacher；主训 gain 小步加     |
+| point+bnd 同时过大        | G5 仅作组合探路；生产 recipe 二选一为主            |
 | best 已够交付但长训未完成 | ep107 best 可冻结；续训为追 teacher + close_mosaic |
-| 未提交代码漂移 | 优先 commit strategy-1 + 单测 |
+| 未提交代码漂移            | 优先 commit strategy-1 + 单测                      |
 
 ---
 
@@ -325,4 +325,4 @@ seg_comp: 0.0     # 完整性靠 G1 单独测
 
 ---
 
-*文档随训练/消融进展更新；下次里程碑：续训启动、ep107 复测、G0/G2/G4 消融结果。*
+_文档随训练/消融进展更新；下次里程碑：续训启动、ep107 复测、G0/G2/G4 消融结果。_

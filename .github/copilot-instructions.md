@@ -10,14 +10,14 @@ Train and finetune **YOLO26s-seg** with optional **teacher distillation** (yolo2
 
 ## Custom modules — read before editing
 
-| Area | Path | Purpose |
-|------|------|---------|
-| Distillation wrapper | `ultralytics/nn/distill_model.py` | Teacher–student feature + proto MSE |
-| Seg / point losses | `ultralytics/utils/loss.py` | `seg_point`, `seg_bnd`, E2E one2many/one2one |
-| PointRend head | `ultralytics/nn/modules/head.py` | `PointHeadMLP`, zero-init on finetune |
-| PointRend YAML | `ultralytics/cfg/models/26/yolo26s-seg-pointrend.yaml` | Adds point_head to recipe200 backbone |
-| Boundary utils | `ultralytics/utils/mask_boundary_loss.py` | Sobel boundary-weighted point sampling |
-| Trainer hooks | `ultralytics/engine/trainer.py` | Resume, DDP, distill rebuild, seg_point cfg |
+| Area                 | Path                                                   | Purpose                                      |
+| -------------------- | ------------------------------------------------------ | -------------------------------------------- |
+| Distillation wrapper | `ultralytics/nn/distill_model.py`                      | Teacher–student feature + proto MSE          |
+| Seg / point losses   | `ultralytics/utils/loss.py`                            | `seg_point`, `seg_bnd`, E2E one2many/one2one |
+| PointRend head       | `ultralytics/nn/modules/head.py`                       | `PointHeadMLP`, zero-init on finetune        |
+| PointRend YAML       | `ultralytics/cfg/models/26/yolo26s-seg-pointrend.yaml` | Adds point_head to recipe200 backbone        |
+| Boundary utils       | `ultralytics/utils/mask_boundary_loss.py`              | Sobel boundary-weighted point sampling       |
+| Trainer hooks        | `ultralytics/engine/trainer.py`                        | Resume, DDP, distill rebuild, seg_point cfg  |
 
 ## Training scripts (`scripts/`)
 

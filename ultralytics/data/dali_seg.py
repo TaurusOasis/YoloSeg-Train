@@ -15,8 +15,9 @@ See: ``docs/en/guides/nvidia-dali.md`` for inference-oriented DALI usage.
 from __future__ import annotations
 
 import math
+from collections.abc import Iterator
 from copy import deepcopy
-from typing import Any, Iterator
+from typing import Any
 
 import numpy as np
 import torch
@@ -136,9 +137,7 @@ def _format_seg_label(label: dict, formatter: Format) -> dict:
             bboxes=np.asarray(label["bboxes"], dtype=np.float32).copy(),
             segments=[np.asarray(s, dtype=np.float32).copy() for s in label.get("segments", [])],
             keypoints=(
-                np.asarray(label["keypoints"], dtype=np.float32).copy()
-                if label.get("keypoints") is not None
-                else None
+                np.asarray(label["keypoints"], dtype=np.float32).copy() if label.get("keypoints") is not None else None
             ),
             bbox_format=label.get("bbox_format", "xywh"),
             normalized=label.get("normalized", False),
@@ -324,9 +323,7 @@ class YOLOSegDALILoader:
         return collated
 
 
-def build_dali_seg_dataloader(
-    dataset: YOLODataset, batch: int, rank: int = -1, hyp=None
-) -> YOLOSegDALILoader:
+def build_dali_seg_dataloader(dataset: YOLODataset, batch: int, rank: int = -1, hyp=None) -> YOLOSegDALILoader:
     """Build experimental DALI-backed training loader for YOLO segmentation."""
     LOGGER.info(
         f"{dataset.prefix}NVIDIA DALI GPU decode/resize enabled (experimental). "

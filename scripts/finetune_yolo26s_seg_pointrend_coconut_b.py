@@ -101,8 +101,9 @@ def main() -> None:
     if args.distill:
         if not args.teacher.exists():
             raise FileNotFoundError(f"Teacher not found: {args.teacher}")
-        train_args.update({"distill_model": str(args.teacher), "dis": 3.0, "dis_proto": 1.0,
-                           "distill_warmup_epochs": 3.0})
+        train_args.update(
+            {"distill_model": str(args.teacher), "dis": 3.0, "dis_proto": 1.0, "distill_warmup_epochs": 3.0}
+        )
 
     print(
         f"PointRend finetune from {args.pretrained.name}: epochs={args.epochs} batch={args.batch} "

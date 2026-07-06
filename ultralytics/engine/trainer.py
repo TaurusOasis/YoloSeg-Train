@@ -353,9 +353,7 @@ class BaseTrainer:
         scaler_enabled = self.amp and self.device.type == "cuda" and self.amp_dtype != torch.bfloat16
         if self.amp and RANK in {-1, 0}:
             dtype_name = str(self.amp_dtype).replace("torch.", "") if self.amp_dtype else "default"
-            LOGGER.info(
-                f"AMP: using {dtype_name} autocast; GradScaler {'enabled' if scaler_enabled else 'disabled'}"
-            )
+            LOGGER.info(f"AMP: using {dtype_name} autocast; GradScaler {'enabled' if scaler_enabled else 'disabled'}")
         self.scaler = (
             torch.amp.GradScaler("cuda", enabled=scaler_enabled)
             if TORCH_2_4
@@ -472,8 +470,12 @@ class BaseTrainer:
                         batch = self.preprocess_batch(batch)
                         distill_model = unwrap_model(self.model)
                         if hasattr(distill_model, "set_distill_warmup_factor"):
-                            warmup_iters = max(int(round(getattr(self.args, "distill_warmup_epochs", 0.0) * nb)), 1)
-                            factor = 1.0 if getattr(self.args, "distill_warmup_epochs", 0.0) <= 0 else min(1.0, ni / warmup_iters)
+                            warmup_iters = max(round(getattr(self.args, "distill_warmup_epochs", 0.0) * nb), 1)
+                            factor = (
+                                1.0
+                                if getattr(self.args, "distill_warmup_epochs", 0.0) <= 0
+                                else min(1.0, ni / warmup_iters)
+                            )
                             distill_model.set_distill_warmup_factor(factor)
                         if self.args.compile:
                             # Decouple inference and loss calculations for improved compile performance
@@ -485,8 +487,7 @@ class BaseTrainer:
                         if RANK != -1:
                             self.loss *= self.world_size
                         loss_bad = not (
-                            torch.isfinite(self.loss.detach()).all()
-                            and torch.isfinite(self.loss_items.detach()).all()
+                            torch.isfinite(self.loss.detach()).all() and torch.isfinite(self.loss_items.detach()).all()
                         )
                         if RANK != -1:
                             flag = torch.tensor(int(loss_bad), device=self.device)

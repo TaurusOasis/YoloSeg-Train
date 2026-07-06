@@ -13,7 +13,6 @@ import yaml
 
 from ultralytics import YOLO
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATA_ROOT = Path("/home/genesis/Train/Dataset/LVIS_coco80_yolo_seg")
 DEFAULT_DATA_YAML = DEFAULT_DATA_ROOT / "lvis-coco80-seg.yaml"
@@ -28,8 +27,12 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--teacher", type=Path, default=DEFAULT_TEACHER, help="Teacher model checkpoint.")
     parser.add_argument("--data", type=Path, default=DEFAULT_DATA_YAML, help="Filtered LVIS COCO80 data YAML.")
     parser.add_argument("--data-root", type=Path, default=DEFAULT_DATA_ROOT, help="Filtered dataset root.")
-    parser.add_argument("--source-root", type=Path, default=DEFAULT_SOURCE_ROOT, help="Original LVIS YOLO dataset root.")
-    parser.add_argument("--prepare-data", action="store_true", help="Build/update the filtered dataset before training.")
+    parser.add_argument(
+        "--source-root", type=Path, default=DEFAULT_SOURCE_ROOT, help="Original LVIS YOLO dataset root."
+    )
+    parser.add_argument(
+        "--prepare-data", action="store_true", help="Build/update the filtered dataset before training."
+    )
     parser.add_argument("--overwrite-data", action="store_true", help="Overwrite filtered labels when preparing data.")
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch", type=int, default=48)

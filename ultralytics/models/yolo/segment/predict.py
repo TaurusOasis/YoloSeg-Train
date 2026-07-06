@@ -140,7 +140,12 @@ class SegmentationPredictor(DetectionPredictor):
         elif pointrend is not None and not self.args.retina_masks:
             point_head, feats = pointrend
             masks = ops.process_mask_pointrend(  # NHW at letterboxed resolution
-                proto, pred[:, 6:], pred[:, :4], img.shape[2:], point_head, feats,
+                proto,
+                pred[:, 6:],
+                pred[:, :4],
+                img.shape[2:],
+                point_head,
+                feats,
                 num_points=int(self.args.seg_point_num),
                 oversample_ratio=int(self.args.seg_point_oversample),
                 importance_ratio=float(self.args.seg_point_importance),

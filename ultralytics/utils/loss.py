@@ -10,7 +10,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ultralytics.utils.metrics import CITYSCAPES_WEIGHT, OKS_SIGMA, RLE_WEIGHT
 from ultralytics.utils.mask_boundary_loss import boundary_l2_loss_per_instance
 from ultralytics.utils.mask_completeness_loss import tversky_loss_per_instance
 from ultralytics.utils.mask_point_sampling import (
@@ -21,6 +20,7 @@ from ultralytics.utils.mask_point_sampling import (
     point_sample,
     point_sigmoid_focal_loss_per_instance,
 )
+from ultralytics.utils.metrics import CITYSCAPES_WEIGHT, OKS_SIGMA, RLE_WEIGHT
 from ultralytics.utils.ops import crop_mask, sobel_magnitude, xywh2xyxy, xyxy2xywh
 from ultralytics.utils.tal import RotatedTaskAlignedAssigner, TaskAlignedAssigner, dist2bbox, dist2rbox, make_anchors
 from ultralytics.utils.torch_utils import autocast
@@ -631,15 +631,15 @@ class v8SegmentationLoss(v8DetectionLoss):
             oversample_ratio (int): Oversample factor for uncertainty point selection.
             importance_ratio (float): Fraction of points chosen by uncertainty.
             point_head (nn.Module | None): Optional PointRend-style MLP head for refined point logits.
-            point_feats (torch.Tensor | None): Fine feature map, either shared per-image (1, C, H, W)
-                (sampled with merged coords, memory-safe for dense images) or per-instance (N, C, H, W).
-            roi_margin (float): Point-sampling ROI mode. >= 0 restricts uncertainty sampling to each
-                instance bbox expanded by this fractional margin (0.0 = exact bbox); < 0 falls back to
-                the legacy full-grid [0, 1]^2 sampler (for ablation parity with the old seg_point).
-            boundary_w (bool): Bias the ROI candidate draw toward the GT Sobel boundary band via a
-                multinomial over per-instance Sobel magnitude restricted to the bbox. Forces ROI on
-                (effective margin = max(roi_margin, 0)); ignored only when roi_margin < 0 and this
-                is False. Needs GT, so it is computed under no_grad alongside coord sampling.
+            point_feats (torch.Tensor | None): Fine feature map, either shared per-image (1, C, H, W) (sampled with
+                merged coords, memory-safe for dense images) or per-instance (N, C, H, W).
+            roi_margin (float): Point-sampling ROI mode. >= 0 restricts uncertainty sampling to each instance bbox
+                expanded by this fractional margin (0.0 = exact bbox); < 0 falls back to the legacy full-grid [0, 1]^2
+                sampler (for ablation parity with the old seg_point).
+            boundary_w (bool): Bias the ROI candidate draw toward the GT Sobel boundary band via a multinomial over
+                per-instance Sobel magnitude restricted to the bbox. Forces ROI on (effective margin = max(roi_margin,
+                0)); ignored only when roi_margin < 0 and this is False. Needs GT, so it is computed under no_grad
+                alongside coord sampling.
 
         Returns:
             (torch.Tensor): The calculated mask loss for a single image.
@@ -657,22 +657,30 @@ class v8SegmentationLoss(v8DetectionLoss):
         total = bce_term
 
         if comp_w > 0.0:
-            total = total + comp_w * tversky_loss_per_instance(
-                pred_mask,
-                gt_mask,
-                xyxy,
-                alpha=tversky_alpha,
-                beta=tversky_beta,
-                gamma=tversky_gamma,
-            ).sum()
+            total = (
+                total
+                + comp_w
+                * tversky_loss_per_instance(
+                    pred_mask,
+                    gt_mask,
+                    xyxy,
+                    alpha=tversky_alpha,
+                    beta=tversky_beta,
+                    gamma=tversky_gamma,
+                ).sum()
+            )
 
         if bnd_w > 0.0:
-            total = total + bnd_w * boundary_l2_loss_per_instance(
-                pred_mask,
-                gt_mask,
-                xyxy,
-                band_weight=sobel_band,
-            ).sum()
+            total = (
+                total
+                + bnd_w
+                * boundary_l2_loss_per_instance(
+                    pred_mask,
+                    gt_mask,
+                    xyxy,
+                    band_weight=sobel_band,
+                ).sum()
+            )
 
         if point_w > 0.0 and pred_mask.shape[0] > 0 and num_points > 0:
             pm4 = pred_mask.float().unsqueeze(1)
@@ -687,9 +695,7 @@ class v8SegmentationLoss(v8DetectionLoss):
                     # Restrict uncertainty sampling to each instance bbox (expanded by eff_margin,
                     # clamped to [0, 1]) so points land on the object/boundary, not background.
                     h_m, w_m = pred_mask.shape[-2], pred_mask.shape[-1]
-                    boxes_norm = xyxy / torch.tensor(
-                        [w_m, h_m, w_m, h_m], device=xyxy.device, dtype=xyxy.dtype
-                    )
+                    boxes_norm = xyxy / torch.tensor([w_m, h_m, w_m, h_m], device=xyxy.device, dtype=xyxy.dtype)
                     # GT Sobel magnitude biases the candidate draw toward the true boundary band.
                     weight_map = sobel_magnitude(gt_mask) if boundary_w else None
                     coords = get_uncertain_point_coords_in_roi(

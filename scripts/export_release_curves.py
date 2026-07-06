@@ -136,7 +136,14 @@ def export_curves() -> list[dict]:
     ax.set_title("YOLO26s-seg COCONut pipeline · best checkpoint per stage")
     ax.set_ylim(0, max(vals) * 1.15)
     for bar, v, s in zip(bars, vals, manifest):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.005, f"{v:.3f}\nep{s['best_epoch']}", ha="center", va="bottom", fontsize=8)
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.005,
+            f"{v:.3f}\nep{s['best_epoch']}",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+        )
     ax.grid(True, axis="y", alpha=0.3)
     overview = OUT / "pipeline-overview.png"
     fig.tight_layout()

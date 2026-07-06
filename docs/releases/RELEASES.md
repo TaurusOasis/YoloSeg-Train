@@ -19,13 +19,13 @@ E  PointRend Finetune (60 ep 目标, 进行中)
 
 ## Release 一览
 
-| GitHub Release | 阶段 | Best epoch | Mask mAP50-95 | 权重文件 |
-|----------------|------|------------|---------------|----------|
-| [`stage-a-lvis-pretrain`](https://github.com/TaurusOasis/YoloSeg-Train/releases/tag/stage-a-lvis-pretrain) | A · LVIS 预训练 | 100 | 0.071 | `yolo26s-seg-lvis-b48-best.pt` |
-| [`stage-b-lvis-coco80-distill`](https://github.com/TaurusOasis/YoloSeg-Train/releases/tag/stage-b-lvis-coco80-distill) | B · LVIS→COCO80 蒸馏 | 100 | 0.315 | `yolo26s-seg-lvis-coco80-distill-best.pt` |
-| [`stage-c-coconut-v1-distill`](https://github.com/TaurusOasis/YoloSeg-Train/releases/tag/stage-c-coconut-v1-distill) | C · COCONut-B v1 蒸馏 | 99 | 0.354 | `yolo26s-seg-coconut-v1-distill-best.pt` |
-| [`stage-d-recipe200-v2`](https://github.com/TaurusOasis/YoloSeg-Train/releases/tag/stage-d-recipe200-v2) | D · v2 Recipe200 | 107 | **0.376** | `yolo26s-seg-coconut-v2-recipe200-best.pt` |
-| [`stage-e-pointrend-ft60`](https://github.com/TaurusOasis/YoloSeg-Train/releases/tag/stage-e-pointrend-ft60) | E · PointRend finetune | 12* | **0.377** | `yolo26s-seg-pointrend-ft60-best.pt` |
+| GitHub Release                                                                                                         | 阶段                   | Best epoch | Mask mAP50-95 | 权重文件                                   |
+| ---------------------------------------------------------------------------------------------------------------------- | ---------------------- | ---------- | ------------- | ------------------------------------------ |
+| [`stage-a-lvis-pretrain`](https://github.com/TaurusOasis/YoloSeg-Train/releases/tag/stage-a-lvis-pretrain)             | A · LVIS 预训练        | 100        | 0.071         | `yolo26s-seg-lvis-b48-best.pt`             |
+| [`stage-b-lvis-coco80-distill`](https://github.com/TaurusOasis/YoloSeg-Train/releases/tag/stage-b-lvis-coco80-distill) | B · LVIS→COCO80 蒸馏   | 100        | 0.315         | `yolo26s-seg-lvis-coco80-distill-best.pt`  |
+| [`stage-c-coconut-v1-distill`](https://github.com/TaurusOasis/YoloSeg-Train/releases/tag/stage-c-coconut-v1-distill)   | C · COCONut-B v1 蒸馏  | 99         | 0.354         | `yolo26s-seg-coconut-v1-distill-best.pt`   |
+| [`stage-d-recipe200-v2`](https://github.com/TaurusOasis/YoloSeg-Train/releases/tag/stage-d-recipe200-v2)               | D · v2 Recipe200       | 107        | **0.376**     | `yolo26s-seg-coconut-v2-recipe200-best.pt` |
+| [`stage-e-pointrend-ft60`](https://github.com/TaurusOasis/YoloSeg-Train/releases/tag/stage-e-pointrend-ft60)           | E · PointRend finetune | 12\*       | **0.377**     | `yolo26s-seg-pointrend-ft60-best.pt`       |
 
 \* Stage E 为 **进行中 run 的 interim release**（ep12/60 时导出）；完整 60 epoch 结束后请用新 tag 覆盖或追加 `stage-e-pointrend-ft60-v2`。
 
@@ -49,13 +49,13 @@ gh release download stage-d-recipe200-v2 \
 
 权重默认在 `runs/segment/<run-name>/weights/best.pt`（已被 `.gitignore` 排除，不入 git）：
 
-| 阶段 | 本地路径 |
-|------|----------|
-| A | `runs/segment/yolo26s-seg-lvis-b48-bf16-swanlab/weights/best.pt` |
-| B | `runs/segment/yolo26s-seg-lvis-coco80-distill-x-teacher-b80-2gpu/weights/best.pt` |
-| C | `runs/segment/yolo26s-seg-coconut-b-distill-x-teacher-lvispretrain-b150-3gpu/weights/best.pt` |
-| D | `runs/segment/yolo26s-seg-coconut-b-v2-distill-recipe200/weights/best.pt` |
-| E | `runs/segment/yolo26s-seg-coconut-b-v2-pointrend-ft60/weights/best.pt` |
+| 阶段 | 本地路径                                                                                      |
+| ---- | --------------------------------------------------------------------------------------------- |
+| A    | `runs/segment/yolo26s-seg-lvis-b48-bf16-swanlab/weights/best.pt`                              |
+| B    | `runs/segment/yolo26s-seg-lvis-coco80-distill-x-teacher-b80-2gpu/weights/best.pt`             |
+| C    | `runs/segment/yolo26s-seg-coconut-b-distill-x-teacher-lvispretrain-b150-3gpu/weights/best.pt` |
+| D    | `runs/segment/yolo26s-seg-coconut-b-v2-distill-recipe200/weights/best.pt`                     |
+| E    | `runs/segment/yolo26s-seg-coconut-b-v2-pointrend-ft60/weights/best.pt`                        |
 
 ### 3. 加载权重继续训练 / finetune
 
@@ -84,14 +84,14 @@ python scripts/finetune_yolo26s_seg_pointrend_coconut_b.py \
 
 各阶段 val / train 曲线 PNG 见 [`curves/`](curves/)：
 
-| 曲线图 | 说明 |
-|--------|------|
-| [`pipeline-overview.png`](curves/pipeline-overview.png) | 五阶段 best Mask mAP50-95 对比 |
-| [`stage-a-lvis-pretrain.png`](curves/stage-a-lvis-pretrain.png) | Stage A（SwanLab run） |
-| [`stage-b-lvis-coco80-distill.png`](curves/stage-b-lvis-coco80-distill.png) | Stage B（SwanLab run） |
-| [`stage-c-coconut-v1-distill.png`](curves/stage-c-coconut-v1-distill.png) | Stage C（SwanLab run） |
-| [`stage-d-recipe200-v2.png`](curves/stage-d-recipe200-v2.png) | Stage D（results.csv；107 ep） |
-| [`stage-e-pointrend-ft60.png`](curves/stage-e-pointrend-ft60.png) | Stage E（SwanLab run；interim） |
+| 曲线图                                                                      | 说明                            |
+| --------------------------------------------------------------------------- | ------------------------------- |
+| [`pipeline-overview.png`](curves/pipeline-overview.png)                     | 五阶段 best Mask mAP50-95 对比  |
+| [`stage-a-lvis-pretrain.png`](curves/stage-a-lvis-pretrain.png)             | Stage A（SwanLab run）          |
+| [`stage-b-lvis-coco80-distill.png`](curves/stage-b-lvis-coco80-distill.png) | Stage B（SwanLab run）          |
+| [`stage-c-coconut-v1-distill.png`](curves/stage-c-coconut-v1-distill.png)   | Stage C（SwanLab run）          |
+| [`stage-d-recipe200-v2.png`](curves/stage-d-recipe200-v2.png)               | Stage D（results.csv；107 ep）  |
+| [`stage-e-pointrend-ft60.png`](curves/stage-e-pointrend-ft60.png)           | Stage E（SwanLab run；interim） |
 
 本地 SwanLab Dashboard（Stage E 示例）：
 

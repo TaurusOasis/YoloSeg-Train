@@ -108,9 +108,7 @@ def main() -> None:
     anno_json = args.anno_json.expanduser().resolve()
     project = args.project.expanduser().resolve()
     summary_csv = (
-        args.summary_csv.expanduser().resolve()
-        if args.summary_csv
-        else project / "lvis_batch_eval_summary.csv"
+        args.summary_csv.expanduser().resolve() if args.summary_csv else project / "lvis_batch_eval_summary.csv"
     )
     project.mkdir(parents=True, exist_ok=True)
 

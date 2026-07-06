@@ -43,6 +43,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--device", type=str, default="2", help="CUDA device id or 'cpu'")
     p.add_argument("--batch", type=int, default=8, help="Val batch size")
     p.add_argument("--suffix", type=str, default="", help="Optional run name suffix (e.g. _plots)")
+    p.add_argument(
+        "--model",
+        action="append",
+        default=None,
+        metavar="NAME=PATH",
+        help="Evaluate custom checkpoints instead of the built-in pair; repeatable (e.g. "
+        "--model pointrend-ft60=runs/segment/.../best.pt).",
+    )
     return p.parse_args()
 
 
@@ -52,9 +60,18 @@ def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(line_buffering=True)
 
+    models = MODELS
+    if args.model:
+        models = {}
+        for item in args.model:
+            name, _, path = item.partition("=")
+            if not path:
+                raise SystemExit(f"--model expects NAME=PATH, got {item!r}")
+            models[name] = Path(path)
+
     PROJECT.mkdir(parents=True, exist_ok=True)
     results: dict[str, dict[str, dict]] = {}
-    for model_name, weights in MODELS.items():
+    for model_name, weights in models.items():
         results[model_name] = {}
         model = YOLO(str(weights))
         for data_name, data_yaml in DATASETS.items():
